@@ -1,8 +1,8 @@
-This is coding and original datasets from AMADEUS and KLEMS for my dissertation.
+This is coding and original datasets from AMADEUS and KLEMS for my final year of undergraduate dissertation.
 
 I recommend you to download datasets and Coding.Rmd and run in your R studio.
 There are a few warnings in coding, when I used a function "melt", I did not set particular Id variables and measure variables.
-It works fine and produces outcome that I wanted.
+It works perfectly well and produces outcome that I wanted.
 
 To briefly explain it,
 
