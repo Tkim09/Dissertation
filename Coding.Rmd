@@ -1,0 +1,3611 @@
+---
+title: Assessing the relationship between labour share of income and Market concentration
+  in French market economy
+subtitle: Analysing Firm-level financial data from AMADEUS using Panel-data regerssion
+output:
+  pdf_document: default
+  word_document: default
+---
+
+
+# Install extensions
+
+Install and import necessary packages for importing, cleaning, transforming and analysing dataset.
+
+```{r setup, eval=FALSE}
+library(AER)
+library(data.table)
+library(dplyr)
+library(foreign)
+library(ggplot2)
+library(mosaic)
+library(plm)
+library(readr)
+library(stargazer)
+library(reshape2)
+library(readxl)
+library(tidyr)
+library(ggpubr)
+library(plotly)
+library(lmtest)
+library(gvlma)
+library(Hmisc)
+library(imputeTS)
+library(rowr)
+setwd('/Users/TKim/Documents/R/DATA')
+```
+
+
+# Herfindahl-Hirschman index (HHI)
+HHI = commonly accepted measure of market concentration. It is calculated by squaring the market share of each firm competing in a market and then summing the resulting numbers. It can range from close to zero to 10,000.
+```{r}
+hhi <- function(x) {
+  # calculate sum
+  total <- sum(x, NA, na.rm = TRUE)
+
+  # calculate share
+  share <- x[which(x >= 0)] / total
+
+  # add
+  return(sum(share^2,  NA, na.rm = TRUE))
+
+}
+```
+
+Function for selecting top_n values
+```{r}
+TOP_N2 <- function(x){
+  # calculate sum
+  Select_20 <- head(sort(x, decreasing=TRUE), n = 20 )
+
+  total_20 <- melt(sum(Select_20, NA, na.rm = TRUE),variable.name = "NA", value.name = "Sales20")
+
+  Select_4 <- head(sort(x, decreasing=TRUE), n = 4 )
+
+  total_4 <- melt(sum(Select_4, NA, na.rm = TRUE),variable.name = "NA", value.name = "Sales4")
+
+  return(melt(data.frame(list(total_20, total_4)),variable.name = "NA", value.name = "Sales")[,-1])
+
+}
+
+```
+
+
+# changing from exponential to numeric notation
+```{r}
+options("scipen" = 100)
+```
+
+# Multiple plot function
+
+ggplot objects can be passed in ..., or to plotlist (as a list of ggplot objects)
+- cols:   Number of columns in layout
+- layout: A matrix specifying the layout. If present, 'cols' is ignored.
+
+If the layout is something like matrix(c(1,2,3,3), nrow=2, byrow=TRUE), then plot 1 will go in the upper left, 2 will go in the upper right, and 3 will go all the way across the bottom.
+```{r}
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                     ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+  if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+```
+
+#Importing, imputation, cleaning, transforming each dataset
+
+#Manufacturing sector
+```{r}
+#Import datasets, Cleaning, Imputation, making it for regression analysis
+
+#Manufacturing industry
+
+M <- as.data.table(read_excel("/Users/TKim/Documents/R/DATA/Manufacturing.xls",
+                            sheet = "Results",
+                            na = "NA"))[,-c(1,4,5,15,25,35:44)]
+M[,c(2:29)] <- lapply(M[,c(2:29)], as.numeric)
+M$`NACE code`<- as.integer(M$`NACE code` / 100)
+M[M<0] <- NA
+
+#####  
+###Manufacturing###
+
+M_sales <- dplyr::select(M, c(1:11)) %>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08,
+            AVG = mean(c(Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08), na.rm=TRUE),
+            NAs = sum(is.na(c(Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08))))
+
+M_VA <- dplyr::select(M, c(1:2,12:20)) %>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08,
+            AVG = mean(c(VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08), na.rm=TRUE),
+            NAs = sum(is.na(c(VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08))))
+
+M_COE <- dplyr::select(M, c(1,2,21:29))%>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08,
+            AVG = mean(c(COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08), na.rm=TRUE),
+            NAs = sum(is.na(c(COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08))))
+
+#Sales
+
+M_sales_re   <- as.data.table(subset(M_sales,  `NAs` <= 2 & `NAs`> 0))[,-c(12,13)] %>%
+  setnames(c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008")) %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M_sales_re <- M_sales_re[order(M_sales_re$YEAR, decreasing= T),][order(M_sales_re$Names, decreasing= F),] %>%
+  spread(Names, Sales, fill = NA, convert = T)
+
+M_NACE <- M_sales_re[1,]
+
+M_sales_re <- M_sales_re[order(M_sales_re$YEAR, decreasing= T),][-10,]
+
+M_sales_re <- data.table(ts(M_sales_re, start = c(2008), end = c(2016), frequency = 1)) %>%
+  na.ma(k = 1, weighting = "simple")
+M_sales_re$YEAR <- as.integer(2008:2016)
+M_sales_re <- rbind(M_sales_re,M_NACE) %>%
+  melt(variable.name = "Names", value.name = "Sales") %>%
+  spread(YEAR, Sales, fill = NA, convert = T)
+
+M_sales_NOre <- as.data.table(subset(M_sales,  `NAs` >= 3 | `NAs` == 0 ))
+M_sales_NOre <- data.table(Names = M_sales_NOre$`Company name`,
+                            "2008"= M_sales_NOre$Sales08,
+                            "2009"= M_sales_NOre$Sales09,
+                            "2010"= M_sales_NOre$Sales10,
+                            "2011"= M_sales_NOre$Sales11,
+                            "2012"= M_sales_NOre$Sales12,
+                            "2013"= M_sales_NOre$Sales13,
+                            "2014"= M_sales_NOre$Sales14,
+                            "2015"= M_sales_NOre$Sales15,
+                            "2016"= M_sales_NOre$Sales16,
+                            NACE = M_sales_NOre$`NACE code`)
+M_sales <- rbind(M_sales_NOre,M_sales_re, fill=T)
+M_sales$Names <- as.character(M_sales$Names)
+remove(M_sales_NOre,M_sales_re)
+
+#VA
+
+M_VA_re   <- as.data.table(subset(M_VA,  `NAs` <= 2 & `NAs`> 0))[,-c(12,13)] %>%
+  setnames(c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008")) %>%
+  melt(variable.name = "YEAR", value.name = "VA")
+
+M_VA_re <- M_VA_re[order(M_VA_re$YEAR, decreasing= T),][order(M_VA_re$Names, decreasing= F),] %>%
+  spread(Names, VA, fill = NA, convert = T)
+
+M_NACE <- M_VA_re[1,]
+
+M_VA_re <- M_VA_re[order(M_VA_re$YEAR, decreasing= T),][-10,]
+
+M_VA_re <- data.table(ts(M_VA_re, start = c(2008), end = c(2016), frequency = 1)) %>%
+  na.ma(k = 1, weighting = "simple")
+M_VA_re$YEAR <- as.integer(2008:2016)
+M_VA_re <- rbind(M_VA_re,M_NACE) %>%
+  melt.data.table(variable.name = "Names", value.name = "VA",variable.factor = T, id.vars = ) %>%
+  spread(YEAR, VA, fill = NA, convert = T)
+
+M_VA_NOre <- as.data.table(subset(M_VA,  `NAs` >= 3 | `NAs` == 0 ))
+M_VA_NOre <- data.table(Names = M_VA_NOre$`Company name`,
+                            "2008"= M_VA_NOre$VA08,
+                            "2009"= M_VA_NOre$VA09,
+                            "2010"= M_VA_NOre$VA10,
+                            "2011"= M_VA_NOre$VA11,
+                            "2012"= M_VA_NOre$VA12,
+                            "2013"= M_VA_NOre$VA13,
+                            "2014"= M_VA_NOre$VA14,
+                            "2015"= M_VA_NOre$VA15,
+                            "2016"= M_VA_NOre$VA16,
+                            NACE = M_VA_NOre$`NACE code`)
+M_VA <- rbind(M_VA_NOre,M_VA_re, fill=T)
+M_VA$Names <- as.character(M_VA$Names)
+remove(M_VA_NOre,M_VA_re)
+
+#COE
+
+M_COE_re   <- as.data.table(subset(M_COE,  `NAs` <= 2 & `NAs`> 0))[,-c(12,13)] %>%
+  setnames(c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008")) %>%
+  melt(variable.name = "YEAR", value.name = "COE")
+
+M_COE_re <- M_COE_re[order(M_COE_re$YEAR, decreasing= T),][order(M_COE_re$Names, decreasing= F),] %>%
+  spread(Names, COE, fill = NA, convert = T)
+
+M_NACE <- M_COE_re[1,]
+
+M_COE_re <- M_COE_re[order(M_COE_re$YEAR, decreasing= T),][-10,]
+
+M_COE_re <- data.table(ts(M_COE_re, start = c(2008), end = c(2016), frequency = 1)) %>%
+  na.ma(k = 1, weighting = "simple")
+M_COE_re$YEAR <- as.integer(2008:2016)
+M_COE_re <- rbind(M_COE_re,M_NACE) %>%
+  melt(variable.name = "Names", value.name = "COE") %>%
+  spread(YEAR, COE, fill = NA, convert = T)
+
+M_COE_NOre <- as.data.table(subset(M_COE,  `NAs` >= 3 | `NAs` == 0 ))
+M_COE_NOre <- data.table(Names = M_COE_NOre$`Company name`,
+                            "2008"= M_COE_NOre$COE08,
+                            "2009"= M_COE_NOre$COE09,
+                            "2010"= M_COE_NOre$COE10,
+                            "2011"= M_COE_NOre$COE11,
+                            "2012"= M_COE_NOre$COE12,
+                            "2013"= M_COE_NOre$COE13,
+                            "2014"= M_COE_NOre$COE14,
+                            "2015"= M_COE_NOre$COE15,
+                            "2016"= M_COE_NOre$COE16,
+                            NACE = M_COE_NOre$`NACE code`)
+M_COE <- rbind(M_COE_NOre,M_COE_re, fill=T)
+M_COE$Names <- as.character(M_COE$Names)
+remove(M_COE_NOre,M_COE_re,M_NACE)
+
+
+##### HHI INDEX #####
+M_HHI_Total <- melt(M_sales[, lapply(.SD, hhi),.SDcols=c(2:10)],
+                    variable.name = "YEAR", value.name = "M_HHI")
+
+M_HHI_SUB <- melt(M_sales[, lapply(.SD, hhi),by=NACE,.SDcols=c(2:10)],
+                  id="NACE",variable.name = "YEAR", value.name = "M_HHI_SUB")
+
+#Total sum of sales each YEAR, Manufacturing.
+M_sales_total <- M_sales[,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20 / 4 firms
+M_sales_top<- M_sales[, lapply(.SD, TOP_N2), .SDcols=c(2:10)] %>% mutate(Type= as.factor(1:2)) %>%
+  melt(variable.name = "YEAR", value.name = "Sales") %>% data.table()
+
+
+##VA
+#Total sum of sales each YEAR, Manufacturing.
+M_VA_total <- M_VA[,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)]%>%
+  melt(variable.name = "YEAR", value.name = "VA_total")
+
+
+##COE
+#subset of Cose of employees
+M_COE_total <- M_COE[,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "COE_total")
+
+
+#This is ready to use dataset for Finance industry
+Manufacturing <- data.table(YEAR = as.numeric(2008:2016),
+                            Sales_Total= as.numeric(M_sales_total$Sales_total),
+                            Sales20= subset(M_sales_top$Sales,M_sales_top$Type == 1),
+                            Sales4 = subset(M_sales_top$Sales,M_sales_top$Type == 2),
+                            CR20_Sales= subset(M_sales_top$Sales,M_sales_top$Type == 1) / M_sales_total$Sales_total,
+                            CR4_Sales = subset(M_sales_top$Sales,M_sales_top$Type == 2) / M_sales_total$Sales_total,
+                            VA = as.numeric(M_VA_total$VA_total),
+                            COE= as.numeric(M_COE_total$COE_total),
+                            LS =as.numeric(M_COE_total$COE_total / M_VA_total$VA_total),
+                            M_HHI=M_HHI_Total$M_HHI,
+                            stringsAsFactors = F)
+
+
+#drop unnecessary variables
+remove(M_sales_total, M_sales_top, M_COE_total, M_VA_total)
+
+
+###Subsetting by 2 digit codes ###
+#manufactruing industry Division 10 : Manufacture of food products
+#Subset of Value-added
+M10_VA <- M_VA[ which(NACE== 10),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M10_COE <- M_COE[ which(NACE== 10),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M10_COE")
+
+
+#Sales
+M10_sales <- M_sales[ which(NACE== 10),-c(1,11)]
+M10_sales_total<- M10_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M10_sales_top<- M10_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M10 <- data.table(YEAR = as.integer(2008:2016),
+                  M10_CR4    = subset(M10_sales_top$Sales, M10_sales_top$Type == 2) / M10_sales_total$Sales_total,
+                  M10_CR20   = subset(M10_sales_top$Sales, M10_sales_top$Type == 1) / M10_sales_total$Sales_total,
+                  M10_LS     = M10_COE$M10_COE / M10_VA$VA_total,
+                  M10_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE== 10),
+                  M10_top4_sales = subset(M10_sales_top$Sales, M10_sales_top$Type == 2),
+                  M10_top20_sales = subset(M10_sales_top$Sales, M10_sales_top$Type == 1),
+                  cbind(M10_sales_total[,2],M10_VA[,2],M10_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M10_COE, M10_sales, M10_sales_top, M10_sales_total, M10_VA)
+
+#manufactruing industry Division 11 : Manufacture of Beverages
+
+#Subset of Value-added
+M11_VA <- M_VA[ which(NACE == 11),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M11_COE <- M_COE[ which(NACE == 11),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M11_COE")
+
+
+#Sales
+M11_sales <- M_sales[ which(NACE == 11),-c(1,11)]
+M11_sales_total<- M11_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M11_sales_top<- M11_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M11 <- data.table(YEAR = as.integer(2008:2016),
+                  M11_CR4    = subset(M11_sales_top$Sales, M11_sales_top$Type == 2) / M11_sales_total$Sales_total,
+                  M11_CR20   = subset(M11_sales_top$Sales, M11_sales_top$Type == 1) / M11_sales_total$Sales_total,
+                  M11_LS     = M11_COE$M11_COE / M11_VA$VA_total,
+                  M11_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE== 11),
+                  M11_top4_sales = subset(M11_sales_top$Sales, M11_sales_top$Type == 2),
+                  M11_top20_sales = subset(M11_sales_top$Sales, M11_sales_top$Type == 1),
+                  cbind(M11_sales_total[,2],M11_VA[,2],M11_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M11_COE, M11_sales, M11_sales_top, M11_sales_total, M11_VA)
+
+#manufactruing industry Division 12 : Manufacture of tobacco products
+M12_VA <- M_VA[ which(NACE == 12),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M12_COE <- M_COE[ which(NACE == 12),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M12_COE")
+
+
+#Sales
+M12_sales <- M_sales[ which(NACE == 12),-c(1,11)]
+M12_sales_total<- M12_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M12_sales_top<- M12_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M12 <- data.table(YEAR = as.integer(2008:2016),
+                  M12_CR4    = subset(M12_sales_top$Sales, M12_sales_top$Type == 2) / M12_sales_total$Sales_total,
+                  M12_CR20   = subset(M12_sales_top$Sales, M12_sales_top$Type == 1) / M12_sales_total$Sales_total,
+                  M12_LS     = M12_COE$M12_COE / M12_VA$VA_total,
+                  M12_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE== 12),
+                  M12_top4_sales = subset(M12_sales_top$Sales, M12_sales_top$Type == 2),
+                  M12_top20_sales = subset(M12_sales_top$Sales, M12_sales_top$Type == 1),
+                  cbind(M12_sales_total[,2],M12_VA[,2],M12_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M12_COE, M12_sales, M12_sales_top, M12_sales_total, M12_VA)
+
+#manufactruing industry Division 13 : Manufacture of textiles
+M13_VA <- M_VA[ which(NACE == 13),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M13_COE <- M_COE[ which(NACE == 13),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M13_COE")
+
+
+#Sales
+M13_sales <- M_sales[ which(NACE == 13),-c(1,11)]
+M13_sales_total<- M13_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M13_sales_top<- M13_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M13 <- data.table(YEAR = as.integer(2008:2016),
+                  M13_CR4    = subset(M13_sales_top$Sales, M13_sales_top$Type == 2) / M13_sales_total$Sales_total,
+                  M13_CR20   = subset(M13_sales_top$Sales, M13_sales_top$Type == 1) / M13_sales_total$Sales_total,
+                  M13_LS     = M13_COE$M13_COE / M13_VA$VA_total,
+                  M13_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE== 13),
+                  M13_top4_sales = subset(M13_sales_top$Sales, M13_sales_top$Type == 2),
+                  M13_top20_sales = subset(M13_sales_top$Sales, M13_sales_top$Type == 1),
+                  cbind(M13_sales_total[,2],M13_VA[,2],M13_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M13_COE, M13_sales, M13_sales_top, M13_sales_total, M13_VA)
+
+#manufactruing industry Division 14 : Manufacture of wearing apparel
+M14_VA <- M_VA[ which(NACE == 14),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M14_COE <- M_COE[ which(NACE == 14),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M14_COE")
+
+
+#Sales
+M14_sales <- M_sales[ which(NACE == 14),-c(1,11)]
+M14_sales_total<- M14_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M14_sales_top<- M14_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M14 <- data.table(YEAR = as.integer(2008:2016),
+                  M14_CR4    = subset(M14_sales_top$Sales, M14_sales_top$Type == 2) / M14_sales_total$Sales_total,
+                  M14_CR20   = subset(M14_sales_top$Sales, M14_sales_top$Type == 1) / M14_sales_total$Sales_total,
+                  M14_LS     = M14_COE$M14_COE / M14_VA$VA_total,
+                  M14_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE== 14),
+                  M14_top4_sales = subset(M14_sales_top$Sales, M14_sales_top$Type == 2),
+                  M14_top20_sales = subset(M14_sales_top$Sales, M14_sales_top$Type == 1),
+                  cbind(M14_sales_total[,2],M14_VA[,2],M14_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M14_COE, M14_sales, M14_sales_top, M14_sales_total, M14_VA)
+
+#manufactruing industry Division 15 : Manufacture of leather and related products
+M15_VA <- M_VA[ which(NACE == 15),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M15_COE <- M_COE[ which(NACE == 15),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M15_COE")
+
+
+#Sales
+M15_sales <- M_sales[ which(NACE == 15),-c(1,11)]
+M15_sales_total<- M15_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M15_sales_top<- M15_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M15 <- data.table(YEAR = as.integer(2008:2016),
+                  M15_CR4    = subset(M15_sales_top$Sales, M15_sales_top$Type == 2) / M15_sales_total$Sales_total,
+                  M15_CR20   = subset(M15_sales_top$Sales, M15_sales_top$Type == 1) / M15_sales_total$Sales_total,
+                  M15_LS     = M15_COE$M15_COE / M15_VA$VA_total,
+                  M15_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 15),
+                  M15_top4_sales = subset(M15_sales_top$Sales, M15_sales_top$Type == 2),
+                  M15_top20_sales = subset(M15_sales_top$Sales, M15_sales_top$Type == 1),
+                  cbind(M15_sales_total[,2],M15_VA[,2],M15_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M15_COE, M15_sales, M15_sales_top, M15_sales_total, M15_VA)
+
+
+#manufactruing industry Division 16 : Manufacture of wood and of products of wood and cork,
+#except furniture; manufacture of articles of straw and plaiting materials
+M16_VA <- M_VA[ which(NACE == 16),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M16_COE <- M_COE[ which(NACE == 16),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M16_COE")
+
+
+#Sales
+M16_sales <- M_sales[ which(NACE == 16),-c(1,11)]
+M16_sales_total<- M16_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M16_sales_top<- M16_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M16 <- data.table(YEAR = as.integer(2008:2016),
+                  M16_CR4    = subset(M16_sales_top$Sales, M16_sales_top$Type == 2) / M16_sales_total$Sales_total,
+                  M16_CR20   = subset(M16_sales_top$Sales, M16_sales_top$Type == 1) / M16_sales_total$Sales_total,
+                  M16_LS     = M16_COE$M16_COE / M16_VA$VA_total,
+                  M16_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 16),
+                  M16_top4_sales = subset(M16_sales_top$Sales, M16_sales_top$Type == 2),
+                  M16_top20_sales = subset(M16_sales_top$Sales, M16_sales_top$Type == 1),
+                  cbind(M16_sales_total[,2],M16_VA[,2],M16_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M16_COE, M16_sales, M16_sales_top, M16_sales_total, M16_VA)
+
+#manufactruing industry Division 17 : Manufacture of paper and paper products
+#Subset of Value-added
+M17_VA <- M_VA[ which(NACE == 17),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M17_COE <- M_COE[ which(NACE == 17),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M17_COE")
+
+
+#Sales
+M17_sales <- M_sales[ which(NACE == 17),-c(1,11)]
+M17_sales_total<- M17_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M17_sales_top<- M17_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M17 <- data.table(YEAR = as.integer(2008:2016),
+                  M17_CR4    = subset(M17_sales_top$Sales, M17_sales_top$Type == 2) / M17_sales_total$Sales_total,
+                  M17_CR20   = subset(M17_sales_top$Sales, M17_sales_top$Type == 1) / M17_sales_total$Sales_total,
+                  M17_LS     = M17_COE$M17_COE / M17_VA$VA_total,
+                  M17_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 17),
+                  M17_top4_sales = subset(M17_sales_top$Sales, M17_sales_top$Type == 2),
+                  M17_top20_sales = subset(M17_sales_top$Sales, M17_sales_top$Type == 1),
+                  cbind(M17_sales_total[,2],M17_VA[,2],M17_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M17_COE, M17_sales, M17_sales_top, M17_sales_total, M17_VA)
+
+#manufactruing industry Division 18 : Printing and reproduction of recorded media
+M18_VA <- M_VA[ which(NACE == 18),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M18_COE <- M_COE[ which(NACE == 18),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M18_COE")
+
+
+#Sales
+M18_sales <- M_sales[ which(NACE == 18),-c(1,11)]
+M18_sales_total<- M18_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M18_sales_top<- M18_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M18 <- data.table(YEAR = as.integer(2008:2016),
+                  M18_CR4    = subset(M18_sales_top$Sales, M18_sales_top$Type == 2) / M18_sales_total$Sales_total,
+                  M18_CR20   = subset(M18_sales_top$Sales, M18_sales_top$Type == 1) / M18_sales_total$Sales_total,
+                  M18_LS     = M18_COE$M18_COE / M18_VA$VA_total,
+                  M18_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 18),
+                  M18_top4_sales = subset(M18_sales_top$Sales, M18_sales_top$Type == 2),
+                  M18_top20_sales = subset(M18_sales_top$Sales, M18_sales_top$Type == 1),
+                  cbind(M18_sales_total[,2],M18_VA[,2],M18_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M18_COE, M18_sales, M18_sales_top, M18_sales_total, M18_VA)
+
+#manufactruing industry Division 19 : Manufacture of coke and re ned petroleum products
+M19_VA <- M_VA[ which(NACE == 19),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M19_COE <- M_COE[ which(NACE == 19),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M19_COE")
+
+
+#Sales
+M19_sales <- M_sales[ which(NACE == 19),-c(1,11)]
+M19_sales_total<- M19_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M19_sales_top<- M19_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M19 <- data.table(YEAR = as.integer(2008:2016),
+                  M19_CR4    = subset(M19_sales_top$Sales, M19_sales_top$Type == 2) / M19_sales_total$Sales_total,
+                  M19_CR20   = subset(M19_sales_top$Sales, M19_sales_top$Type == 1) / M19_sales_total$Sales_total,
+                  M19_LS     = M19_COE$M19_COE / M19_VA$VA_total,
+                  M19_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 19),
+                  M19_top4_sales = subset(M19_sales_top$Sales, M19_sales_top$Type == 2),
+                  M19_top20_sales = subset(M19_sales_top$Sales, M19_sales_top$Type == 1),
+                  cbind(M19_sales_total[,2],M19_VA[,2],M19_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M19_COE, M19_sales, M19_sales_top, M19_sales_total, M19_VA)
+
+#manufactruing industry Division 20 : Manufacture of chemicals and chemical products
+M20_VA <- M_VA[ which(NACE == 20),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M20_COE <- M_COE[ which(NACE == 20),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M20_COE")
+
+
+#Sales
+M20_sales <- M_sales[ which(NACE == 20),-c(1,11)]
+M20_sales_total<- M20_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M20_sales_top<- M20_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M20 <- data.table(YEAR = as.integer(2008:2016),
+                  M20_CR4    = subset(M20_sales_top$Sales, M20_sales_top$Type == 2) / M20_sales_total$Sales_total,
+                  M20_CR20   = subset(M20_sales_top$Sales, M20_sales_top$Type == 1) / M20_sales_total$Sales_total,
+                  M20_LS     = M20_COE$M20_COE / M20_VA$VA_total,
+                  M20_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 20),
+                  M20_top4_sales = subset(M20_sales_top$Sales, M20_sales_top$Type == 2),
+                  M20_top20_sales = subset(M20_sales_top$Sales, M20_sales_top$Type == 1),
+                  cbind(M20_sales_total[,2],M20_VA[,2],M20_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M20_COE, M20_sales, M20_sales_top, M20_sales_total, M20_VA)
+
+#manufactruing industry Division 21 : Manufacture of basic pharmaceutical products and pharmaceutical preparations
+M21_VA <- M_VA[ which(NACE == 21),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M21_COE <- M_COE[ which(NACE == 21),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M21_COE")
+
+
+#Sales
+M21_sales <- M_sales[ which(NACE == 21),-c(1,11)]
+M21_sales_total<- M21_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M21_sales_top<- M21_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M21 <- data.table(YEAR = as.integer(2008:2016),
+                  M21_CR4    = subset(M21_sales_top$Sales, M21_sales_top$Type == 2) / M21_sales_total$Sales_total,
+                  M21_CR20   = subset(M21_sales_top$Sales, M21_sales_top$Type == 1) / M21_sales_total$Sales_total,
+                  M21_LS     = M21_COE$M21_COE / M21_VA$VA_total,
+                  M21_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 21),
+                  M21_top4_sales = subset(M21_sales_top$Sales, M21_sales_top$Type == 2),
+                  M21_top20_sales = subset(M21_sales_top$Sales, M21_sales_top$Type == 1),
+                  cbind(M21_sales_total[,2],M21_VA[,2],M21_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M21_COE, M21_sales, M21_sales_top, M21_sales_total, M21_VA)
+
+
+#manufactruing industry Division 22 : Manufacture of rubber and plastic products
+M22_VA <- M_VA[ which(NACE == 22),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M22_COE <- M_COE[ which(NACE == 22),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M22_COE")
+
+
+#Sales
+M22_sales <- M_sales[ which(NACE == 22),-c(1,11)]
+M22_sales_total<- M22_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M22_sales_top<- M22_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M22 <- data.table(YEAR = as.integer(2008:2016),
+                  M22_CR4    = subset(M22_sales_top$Sales, M22_sales_top$Type == 2) / M22_sales_total$Sales_total,
+                  M22_CR20   = subset(M22_sales_top$Sales, M22_sales_top$Type == 1) / M22_sales_total$Sales_total,
+                  M22_LS     = M22_COE$M22_COE / M22_VA$VA_total,
+                  M22_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 22),
+                  M22_top4_sales = subset(M22_sales_top$Sales, M22_sales_top$Type == 2),
+                  M22_top20_sales = subset(M22_sales_top$Sales, M22_sales_top$Type == 1),
+                  cbind(M22_sales_total[,2],M22_VA[,2],M22_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M22_COE, M22_sales, M22_sales_top, M22_sales_total, M22_VA)
+
+#manufactruing industry Division 23 : Manufacture of other non-metallic mineral products
+M23_VA <- M_VA[ which(NACE == 23),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M23_COE <- M_COE[ which(NACE == 23),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M23_COE")
+
+
+#Sales
+M23_sales <- M_sales[ which(NACE == 23),-c(1,11)]
+M23_sales_total<- M23_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M23_sales_top<- M23_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M23 <- data.table(YEAR = as.integer(2008:2016),
+                  M23_CR4    = subset(M23_sales_top$Sales, M23_sales_top$Type == 2) / M23_sales_total$Sales_total,
+                  M23_CR20   = subset(M23_sales_top$Sales, M23_sales_top$Type == 1) / M23_sales_total$Sales_total,
+                  M23_LS     = M23_COE$M23_COE / M23_VA$VA_total,
+                  M23_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 23),
+                  M23_top4_sales = subset(M23_sales_top$Sales, M23_sales_top$Type == 2),
+                  M23_top20_sales = subset(M23_sales_top$Sales, M23_sales_top$Type == 1),
+                  cbind(M23_sales_total[,2],M23_VA[,2],M23_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M23_COE, M23_sales, M23_sales_top, M23_sales_total, M23_VA)
+
+#manufactruing industry Division 24 : Manufacture of basic metals
+M24_VA <- M_VA[ which(NACE == 24),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M24_COE <- M_COE[ which(NACE == 24),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M24_COE")
+
+
+#Sales
+M24_sales <- M_sales[ which(NACE == 24),-c(1,11)]
+M24_sales_total<- M24_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M24_sales_top<- M24_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M24 <- data.table(YEAR = as.integer(2008:2016),
+                  M24_CR4    = subset(M24_sales_top$Sales, M24_sales_top$Type == 2) / M24_sales_total$Sales_total,
+                  M24_CR20   = subset(M24_sales_top$Sales, M24_sales_top$Type == 1) / M24_sales_total$Sales_total,
+                  M24_LS     = M24_COE$M24_COE / M24_VA$VA_total,
+                  M24_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 24),
+                  M24_top4_sales = subset(M24_sales_top$Sales, M24_sales_top$Type == 2),
+                  M24_top20_sales = subset(M24_sales_top$Sales, M24_sales_top$Type == 1),
+                  cbind(M24_sales_total[,2],M24_VA[,2],M24_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M24_COE, M24_sales, M24_sales_top, M24_sales_total, M24_VA)
+
+
+#manufactruing industry Division 25 : Manufacture of fabricated metal products, except machinery and equipment
+M25_VA <- M_VA[ which(NACE == 25),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M25_COE <- M_COE[ which(NACE == 25),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M25_COE")
+
+
+#Sales
+M25_sales <- M_sales[ which(NACE == 25),-c(1,11)]
+M25_sales_total<- M25_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M25_sales_top<- M25_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M25 <- data.table(YEAR = as.integer(2008:2016),
+                  M25_CR4    = subset(M25_sales_top$Sales, M25_sales_top$Type == 2) / M25_sales_total$Sales_total,
+                  M25_CR20   = subset(M25_sales_top$Sales, M25_sales_top$Type == 1) / M25_sales_total$Sales_total,
+                  M25_LS     = M25_COE$M25_COE / M25_VA$VA_total,
+                  M25_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 25),
+                  M25_top4_sales = subset(M25_sales_top$Sales, M25_sales_top$Type == 2),
+                  M25_top20_sales = subset(M25_sales_top$Sales, M25_sales_top$Type == 1),
+                  cbind(M25_sales_total[,2],M25_VA[,2],M25_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M25_COE, M25_sales, M25_sales_top, M25_sales_total, M25_VA)
+
+
+
+#manufactruing industry Division 26 : Manufacture of computer, electronic and optical products
+M26_VA <- M_VA[ which(NACE == 26),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M26_COE <- M_COE[ which(NACE == 26),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M26_COE")
+
+
+#Sales
+M26_sales <- M_sales[ which(NACE == 26),-c(1,11)]
+M26_sales_total<- M26_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M26_sales_top<- M26_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M26 <- data.table(YEAR = as.integer(2008:2016),
+                  M26_CR4    = subset(M26_sales_top$Sales, M26_sales_top$Type == 2) / M26_sales_total$Sales_total,
+                  M26_CR20   = subset(M26_sales_top$Sales, M26_sales_top$Type == 1) / M26_sales_total$Sales_total,
+                  M26_LS     = M26_COE$M26_COE / M26_VA$VA_total,
+                  M26_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 26),
+                  M26_top4_sales = subset(M26_sales_top$Sales, M26_sales_top$Type == 2),
+                  M26_top20_sales = subset(M26_sales_top$Sales, M26_sales_top$Type == 1),
+                  cbind(M26_sales_total[,2],M26_VA[,2],M26_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M26_COE, M26_sales, M26_sales_top, M26_sales_total, M26_VA)
+
+
+
+#manufactruing industry Division 27 : Manufacture of electrical equipment
+M27_VA <- M_VA[ which(NACE == 27),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M27_COE <- M_COE[ which(NACE == 27),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M27_COE")
+
+
+#Sales
+M27_sales <- M_sales[ which(NACE == 27),-c(1,11)]
+M27_sales_total<- M27_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M27_sales_top<- M27_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M27 <- data.table(YEAR = as.integer(2008:2016),
+                  M27_CR4    = subset(M27_sales_top$Sales, M27_sales_top$Type == 2) / M27_sales_total$Sales_total,
+                  M27_CR20   = subset(M27_sales_top$Sales, M27_sales_top$Type == 1) / M27_sales_total$Sales_total,
+                  M27_LS     = M27_COE$M27_COE / M27_VA$VA_total,
+                  M27_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 27),
+                  M27_top4_sales = subset(M27_sales_top$Sales, M27_sales_top$Type == 2),
+                  M27_top20_sales = subset(M27_sales_top$Sales, M27_sales_top$Type == 1),
+                  cbind(M27_sales_total[,2],M27_VA[,2],M27_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M27_COE, M27_sales, M27_sales_top, M27_sales_total, M27_VA)
+
+
+#manufactruing industry Division 28 : Manufacture of machineryand equipment n.e.c.
+M28_VA <- M_VA[ which(NACE == 28),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M28_COE <- M_COE[ which(NACE == 28),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M28_COE")
+
+
+#Sales
+M28_sales <- M_sales[ which(NACE == 28),-c(1,11)]
+M28_sales_total<- M28_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M28_sales_top<- M28_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M28 <- data.table(YEAR = as.integer(2008:2016),
+                  M28_CR4    = subset(M28_sales_top$Sales, M28_sales_top$Type == 2) / M28_sales_total$Sales_total,
+                  M28_CR20   = subset(M28_sales_top$Sales, M28_sales_top$Type == 1) / M28_sales_total$Sales_total,
+                  M28_LS     = M28_COE$M28_COE / M28_VA$VA_total,
+                  M28_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 28),
+                  M28_top4_sales = subset(M28_sales_top$Sales, M28_sales_top$Type == 2),
+                  M28_top20_sales = subset(M28_sales_top$Sales, M28_sales_top$Type == 1),
+                  cbind(M28_sales_total[,2],M28_VA[,2],M28_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M28_COE, M28_sales, M28_sales_top, M28_sales_total, M28_VA)
+
+
+
+#manufactruing industry Division 29 : Manufacture of motor vehicles, trailers and semi-trailers
+M29_VA <- M_VA[ which(NACE == 29),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M29_COE <- M_COE[ which(NACE == 29),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M29_COE")
+
+
+#Sales
+M29_sales <- M_sales[ which(NACE == 29),-c(1,11)]
+M29_sales_total<- M29_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M29_sales_top<- M29_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M29 <- data.table(YEAR = as.integer(2008:2016),
+                  M29_CR4    = subset(M29_sales_top$Sales, M29_sales_top$Type == 2) / M29_sales_total$Sales_total,
+                  M29_CR20   = subset(M29_sales_top$Sales, M29_sales_top$Type == 1) / M29_sales_total$Sales_total,
+                  M29_LS     = M29_COE$M29_COE / M29_VA$VA_total,
+                  M29_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 29),
+                  M29_top4_sales = subset(M29_sales_top$Sales, M29_sales_top$Type == 2),
+                  M29_top20_sales = subset(M29_sales_top$Sales, M29_sales_top$Type == 1),
+                  cbind(M29_sales_total[,2],M29_VA[,2],M29_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M29_COE, M29_sales, M29_sales_top, M29_sales_total, M29_VA)
+
+
+
+#manufactruing industry Division 30 : Manufacture of other transport equipment
+M30_VA <- M_VA[ which(NACE == 30),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M30_COE <- M_COE[ which(NACE == 30),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M30_COE")
+
+
+#Sales
+M30_sales <- M_sales[ which(NACE == 30),-c(1,11)]
+M30_sales_total<- M30_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M30_sales_top<- M30_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M30 <- data.table(YEAR = as.integer(2008:2016),
+                  M30_CR4    = subset(M30_sales_top$Sales, M30_sales_top$Type == 2) / M30_sales_total$Sales_total,
+                  M30_CR20   = subset(M30_sales_top$Sales, M30_sales_top$Type == 1) / M30_sales_total$Sales_total,
+                  M30_LS     = M30_COE$M30_COE / M30_VA$VA_total,
+                  M30_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 30),
+                  M30_top4_sales = subset(M30_sales_top$Sales, M30_sales_top$Type == 2),
+                  M30_top20_sales = subset(M30_sales_top$Sales, M30_sales_top$Type == 1),
+                  cbind(M30_sales_total[,2],M30_VA[,2],M30_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M30_COE, M30_sales, M30_sales_top, M30_sales_total, M30_VA)
+
+
+#manufactruing industry Division 31 : Manufacture of furniture
+M31_VA <- M_VA[ which(NACE == 31),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M31_COE <- M_COE[ which(NACE == 31),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M31_COE")
+
+
+#Sales
+M31_sales <- M_sales[ which(NACE == 31),-c(1,11)]
+M31_sales_total<- M31_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M31_sales_top<- M31_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M31 <- data.table(YEAR = as.integer(2008:2016),
+                  M31_CR4    = subset(M31_sales_top$Sales, M31_sales_top$Type == 2) / M31_sales_total$Sales_total,
+                  M31_CR20   = subset(M31_sales_top$Sales, M31_sales_top$Type == 1) / M31_sales_total$Sales_total,
+                  M31_LS     = M31_COE$M31_COE / M31_VA$VA_total,
+                  M31_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 31),
+                  M31_top4_sales = subset(M31_sales_top$Sales, M31_sales_top$Type == 2),
+                  M31_top20_sales = subset(M31_sales_top$Sales, M31_sales_top$Type == 1),
+                  cbind(M31_sales_total[,2],M31_VA[,2],M31_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M31_COE, M31_sales, M31_sales_top, M31_sales_total, M31_VA)
+
+
+#manufactruing industry Division 32 : Manufacture of fabricated metal products, except machinery and equipment
+M32_VA <- M_VA[ which(NACE == 32),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M32_COE <- M_COE[ which(NACE == 32),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M32_COE")
+
+
+#Sales
+M32_sales <- M_sales[ which(NACE == 32),-c(1,11)]
+M32_sales_total<- M32_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M32_sales_top<- M32_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M32 <- data.table(YEAR = as.integer(2008:2016),
+                  M32_CR4    = subset(M32_sales_top$Sales, M32_sales_top$Type == 2) / M32_sales_total$Sales_total,
+                  M32_CR20   = subset(M32_sales_top$Sales, M32_sales_top$Type == 1) / M32_sales_total$Sales_total,
+                  M32_LS     = M32_COE$M32_COE / M32_VA$VA_total,
+                  M32_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 32),
+                  M32_top4_sales = subset(M32_sales_top$Sales, M32_sales_top$Type == 2),
+                  M32_top20_sales = subset(M32_sales_top$Sales, M32_sales_top$Type == 1),
+                  cbind(M32_sales_total[,2],M32_VA[,2],M32_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M32_COE, M32_sales, M32_sales_top, M32_sales_total, M32_VA)
+
+
+#manufactruing industry Division 33 : Manufacture of fabricated metal products, except machinery and equipment
+M33_VA <- M_VA[ which(NACE == 33),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M33_COE <- M_COE[ which(NACE == 33),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M33_COE")
+
+
+#Sales
+M33_sales <- M_sales[ which(NACE == 33),-c(1,11)]
+M33_sales_total<- M33_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M33_sales_top<- M33_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M33 <- data.table(YEAR = as.integer(2008:2016),
+                  M33_CR4    = subset(M33_sales_top$Sales, M33_sales_top$Type == 2) / M33_sales_total$Sales_total,
+                  M33_CR20   = subset(M33_sales_top$Sales, M33_sales_top$Type == 1) / M33_sales_total$Sales_total,
+                  M33_LS     = M33_COE$M33_COE / M33_VA$VA_total,
+                  M33_HHI    = subset(M_HHI_SUB$M_HHI_SUB, M_HHI_SUB$NACE == 33),
+                  M33_top4_sales = subset(M33_sales_top$Sales, M33_sales_top$Type == 2),
+                  M33_top20_sales = subset(M33_sales_top$Sales, M33_sales_top$Type == 1),
+                  cbind(M33_sales_total[,2],M33_VA[,2],M33_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M33_COE, M33_sales, M33_sales_top, M33_sales_total, M33_VA)
+
+```
+
+#Construction
+```{r}
+CONS <- as.data.table(read_excel("/Users/TKim/Documents/R/DATA/Construction.xls",
+                            sheet = "Results",
+                            na = "NA"))[,-c(1,4,5,15,25,35:44)]
+CONS[,c(2:29)] <- lapply(CONS[,c(2:29)], as.numeric)
+CONS$`NACE code`<- as.integer(CONS$`NACE code` / 100)
+CONS[CONS<0] <- NA
+
+
+CONS_sales <- dplyr::select(CONS, c(1:11)) %>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08,
+            AVG = mean(c(Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08), na.rm=TRUE),
+            NAs = sum(is.na(c(Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08))))
+
+CONS_VA <- dplyr::select(CONS, c(1:2,12:20)) %>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08,
+            AVG = mean(c(VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08), na.rm=TRUE),
+            NAs = sum(is.na(c(VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08))))
+
+CONS_COE <- dplyr::select(CONS, c(1,2,21:29))%>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08,
+            AVG = mean(c(COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08), na.rm=TRUE),
+            NAs = sum(is.na(c(COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08))))
+
+
+CONS_sales_re   <- as.data.table(subset(CONS_sales,  `NAs` <= 2 & `NAs`> 0))[,-c(12,13)] %>%
+  setnames(c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008")) %>%
+  melt(variable.name = "YEAR", value.name = "Sales")
+
+CONS_sales_re <- CONS_sales_re[order(CONS_sales_re$YEAR, decreasing= T),][order(CONS_sales_re$Names, decreasing= F),] %>%
+  spread(Names, Sales, fill = NA, convert = T)
+
+CONS_NACE <- CONS_sales_re[1,]
+
+CONS_sales_re <- CONS_sales_re[order(CONS_sales_re$YEAR, decreasing= T),][-10,]
+
+CONS_sales_re <- data.table(ts(CONS_sales_re, start = c(2008), end = c(2016), frequency = 1)) %>%
+  na.ma(k = 1, weighting = "simple")
+CONS_sales_re$YEAR <- as.integer(2008:2016)
+CONS_sales_re <- rbind(CONS_sales_re,CONS_NACE) %>%
+  melt(variable.name = "Names", value.name = "Sales") %>%
+  spread(YEAR, Sales, fill = NA, convert = T)
+
+CONS_sales_NOre <- as.data.table(subset(CONS_sales,  `NAs` >= 3 | `NAs` == 0 ))
+CONS_sales_NOre <- data.table(Names = CONS_sales_NOre$`Company name`,
+                           "2008"= CONS_sales_NOre$Sales08,
+                           "2009"= CONS_sales_NOre$Sales09,
+                           "2010"= CONS_sales_NOre$Sales10,
+                           "2011"= CONS_sales_NOre$Sales11,
+                           "2012"= CONS_sales_NOre$Sales12,
+                           "2013"= CONS_sales_NOre$Sales13,
+                           "2014"= CONS_sales_NOre$Sales14,
+                           "2015"= CONS_sales_NOre$Sales15,
+                           "2016"= CONS_sales_NOre$Sales16,
+                           NACE = CONS_sales_NOre$`NACE code`)
+CONS_sales <- rbind(CONS_sales_NOre,CONS_sales_re, fill=T)
+CONS_sales$Names <- as.character(CONS_sales$Names)
+remove(CONS_sales_NOre,CONS_sales_re)
+
+#VA
+
+CONS_VA_re   <- as.data.table(subset(CONS_VA,  `NAs` <= 2 & `NAs`> 0))[,-c(12,13)] %>%
+  setnames(c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008")) %>%
+  melt(variable.name = "YEAR", value.name = "VA")
+
+CONS_VA_re <- CONS_VA_re[order(CONS_VA_re$YEAR, decreasing= T),][order(CONS_VA_re$Names, decreasing= F),] %>%
+  spread(Names, VA, fill = NA, convert = T)
+
+CONS_NACE <- CONS_VA_re[1,]
+
+CONS_VA_re <- CONS_VA_re[order(CONS_VA_re$YEAR, decreasing= T),][-10,]
+
+CONS_VA_re <- data.table(ts(CONS_VA_re, start = c(2008), end = c(2016), frequency = 1)) %>%
+  na.ma(k = 1, weighting = "simple")
+CONS_VA_re$YEAR <- as.integer(2008:2016)
+CONS_VA_re <- rbind(CONS_VA_re,CONS_NACE) %>%
+  melt(variable.name = "Names", value.name = "VA") %>%
+  spread(YEAR, VA, fill = NA, convert = T)
+
+CONS_VA_NOre <- as.data.table(subset(CONS_VA,  `NAs` >= 3 | `NAs` == 0 ))
+CONS_VA_NOre <- data.table(Names = CONS_VA_NOre$`Company name`,
+                        "2008"= CONS_VA_NOre$VA08,
+                        "2009"= CONS_VA_NOre$VA09,
+                        "2010"= CONS_VA_NOre$VA10,
+                        "2011"= CONS_VA_NOre$VA11,
+                        "2012"= CONS_VA_NOre$VA12,
+                        "2013"= CONS_VA_NOre$VA13,
+                        "2014"= CONS_VA_NOre$VA14,
+                        "2015"= CONS_VA_NOre$VA15,
+                        "2016"= CONS_VA_NOre$VA16,
+                        NACE = CONS_VA_NOre$`NACE code`)
+CONS_VA <- rbind(CONS_VA_NOre,CONS_VA_re, fill=T)
+CONS_VA$Names <- as.character(CONS_VA$Names)
+remove(CONS_VA_NOre,CONS_VA_re)
+
+#COE
+
+CONS_COE_re   <- as.data.table(subset(CONS_COE,  `NAs` <= 2 & `NAs`> 0))[,-c(12,13)] %>%
+  setnames(c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008")) %>%
+  melt(variable.name = "YEAR", value.name = "COE")
+
+CONS_COE_re <- CONS_COE_re[order(CONS_COE_re$YEAR, decreasing= T),][order(CONS_COE_re$Names, decreasing= F),] %>%
+  spread(Names, COE, fill = NA, convert = T)
+
+CONS_NACE <- CONS_COE_re[1,]
+
+CONS_COE_re <- CONS_COE_re[order(CONS_COE_re$YEAR, decreasing= T),][-10,]
+
+CONS_COE_re <- data.table(ts(CONS_COE_re, start = c(2008), end = c(2016), frequency = 1)) %>%
+  na.ma(k = 1, weighting = "simple")
+CONS_COE_re$YEAR <- as.integer(2008:2016)
+CONS_COE_re <- rbind(CONS_COE_re,CONS_NACE) %>%
+  melt(variable.name = "Names", value.name = "COE") %>%
+  spread(YEAR, COE, fill = NA, convert = T)
+
+CONS_COE_NOre <- as.data.table(subset(CONS_COE,  `NAs` >= 3 | `NAs` == 0 ))
+CONS_COE_NOre <- data.table(Names = CONS_COE_NOre$`Company name`,
+                         "2008"= CONS_COE_NOre$COE08,
+                         "2009"= CONS_COE_NOre$COE09,
+                         "2010"= CONS_COE_NOre$COE10,
+                         "2011"= CONS_COE_NOre$COE11,
+                         "2012"= CONS_COE_NOre$COE12,
+                         "2013"= CONS_COE_NOre$COE13,
+                         "2014"= CONS_COE_NOre$COE14,
+                         "2015"= CONS_COE_NOre$COE15,
+                         "2016"= CONS_COE_NOre$COE16,
+                         NACE = CONS_COE_NOre$`NACE code`)
+CONS_COE <- rbind(CONS_COE_NOre,CONS_COE_re, fill=T)
+CONS_COE$Names <- as.character(CONS_COE$Names)
+remove(CONS_COE_NOre,CONS_COE_re,CONS_NACE)
+
+
+##### HHI INDEX #####
+CONS_HHI_Total <- melt(CONS_sales[, lapply(.SD, hhi),.SDcols=c(2:10)],
+                    variable.name = "YEAR", value.name = "CONS_HHI")
+
+CONS_HHI_SUB <- melt(CONS_sales[, lapply(.SD, hhi),by=NACE,.SDcols=c(2:10)],
+                  id="NACE",variable.name = "YEAR", value.name = "CONS_HHI_SUB")
+
+#Total sum of sales each YEAR, Manufacturing.
+CONS_sales_total <- CONS_sales[,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20 / 4 firms
+CONS_sales_top<- CONS_sales[, lapply(.SD, TOP_N2), .SDcols=c(2:10)] %>% mutate(Type= as.factor(1:2)) %>% data.table() %>%
+  melt(variable.name = "YEAR", value.name = "Sales")
+
+##VA
+#Total sum of sales each YEAR, Manufacturing.
+CONS_VA_total <- CONS_VA[,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)]%>%
+  melt(variable.name = "YEAR", value.name = "VA_total")
+
+
+##COE
+#subset of Cose of employees
+CONS_COE_total <- CONS_COE[,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "COE_total")
+
+
+#This is ready to use dataset for Finance industry
+Construction <- data.table(YEAR = as.numeric(2008:2016),
+                            Sales_Total= as.numeric(CONS_sales_total$Sales_total),
+                            Sales20= subset(CONS_sales_top$Sales,CONS_sales_top$Type == 1),
+                            Sales4 = subset(CONS_sales_top$Sales,CONS_sales_top$Type == 2),
+                            CR20_Sales= subset(CONS_sales_top$Sales,CONS_sales_top$Type == 1) / CONS_sales_total$Sales_total,
+                            CR4_Sales = subset(CONS_sales_top$Sales,CONS_sales_top$Type == 2) / CONS_sales_total$Sales_total,
+                            VA = as.numeric(CONS_VA_total$VA_total),
+                            COE= as.numeric(CONS_COE_total$COE_total),
+                            LS =as.numeric(CONS_COE_total$COE_total / CONS_VA_total$VA_total),
+                            CONS_HHI=CONS_HHI_Total$CONS_HHI,
+                            stringsAsFactors = F)
+
+
+#drop unnecessary variables
+remove(CONS_sales_total, CONS_sales_top, CONS_COE_total, CONS_VA_total)
+
+#####
+#Division 41 : Construction of buildings
+CONS41_VA <- CONS_VA[ which(NACE == 41),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+CONS41_COE <- CONS_COE[ which(NACE == 41),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "CONS41_COE")
+
+
+#Sales
+CONS41_sales <- CONS_sales[ which(NACE == 41),-c(1,11)]
+CONS41_sales_total<- CONS41_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+CONS41_sales_top<- CONS41_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+CONS41 <- data.table(YEAR = as.integer(2008:2016),
+                  CONS41_CR4    = subset(CONS41_sales_top$Sales, CONS41_sales_top$Type == 2) / CONS41_sales_total$Sales_total,
+                  CONS41_CR20   = subset(CONS41_sales_top$Sales, CONS41_sales_top$Type == 1) / CONS41_sales_total$Sales_total,
+                  CONS41_LS     = CONS41_COE$CONS41_COE / CONS41_VA$VA_total,
+                  CONS41_HHI    = subset(CONS_HHI_SUB$CONS_HHI_SUB, CONS_HHI_SUB$NACE == 41),
+                  CONS41_top4_sales = subset(CONS41_sales_top$Sales, CONS41_sales_top$Type == 2),
+                  CONS41_top20_sales = subset(CONS41_sales_top$Sales, CONS41_sales_top$Type == 1),
+                  cbind(CONS41_sales_total[,2],CONS41_VA[,2],CONS41_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(CONS41_COE, CONS41_sales, CONS41_sales_top, CONS41_sales_total, CONS41_VA)
+
+
+#Division 42 : Civil engineering
+CONS42_VA <- CONS_VA[ which(NACE == 42),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+CONS42_COE <- CONS_COE[ which(NACE == 42),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "CONS42_COE")
+
+
+#Sales
+CONS42_sales <- CONS_sales[ which(NACE == 42),-c(1,11)]
+CONS42_sales_total<- CONS42_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+CONS42_sales_top<- CONS42_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+CONS42 <- data.table(YEAR = as.integer(2008:2016),
+                  CONS42_CR4    = subset(CONS42_sales_top$Sales, CONS42_sales_top$Type == 2) / CONS42_sales_total$Sales_total,
+                  CONS42_CR20   = subset(CONS42_sales_top$Sales, CONS42_sales_top$Type == 1) / CONS42_sales_total$Sales_total,
+                  CONS42_LS     = CONS42_COE$CONS42_COE / CONS42_VA$VA_total,
+                  CONS42_HHI    = subset(CONS_HHI_SUB$CONS_HHI_SUB, CONS_HHI_SUB$NACE == 42),
+                  CONS42_top4_sales = subset(CONS42_sales_top$Sales, CONS42_sales_top$Type == 2),
+                  CONS42_top20_sales = subset(CONS42_sales_top$Sales, CONS42_sales_top$Type == 1),
+                  cbind(CONS42_sales_total[,2],CONS42_VA[,2],CONS42_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(CONS42_COE, CONS42_sales, CONS42_sales_top, CONS42_sales_total, CONS42_VA)
+
+
+#Division 43 : Specialised construction activities
+CONS43_VA <- CONS_VA[ which(NACE == 43),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+CONS43_COE <- CONS_COE[ which(NACE == 43),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "CONS43_COE")
+
+
+#Sales
+CONS43_sales <- CONS_sales[ which(NACE == 43),-c(1,11)]
+CONS43_sales_total<- CONS43_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+CONS43_sales_top<- CONS43_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+CONS43 <- data.table(YEAR = as.integer(2008:2016),
+                  CONS43_CR4    = subset(CONS43_sales_top$Sales, CONS43_sales_top$Type == 2) / CONS43_sales_total$Sales_total,
+                  CONS43_CR20   = subset(CONS43_sales_top$Sales, CONS43_sales_top$Type == 1) / CONS43_sales_total$Sales_total,
+                  CONS43_LS     = CONS43_COE$CONS43_COE / CONS43_VA$VA_total,
+                  CONS43_HHI    = subset(CONS_HHI_SUB$CONS_HHI_SUB, CONS_HHI_SUB$NACE == 43),
+                  CONS43_top4_sales = subset(CONS43_sales_top$Sales, CONS43_sales_top$Type == 2),
+                  CONS43_top20_sales = subset(CONS43_sales_top$Sales, CONS43_sales_top$Type == 1),
+                  cbind(CONS43_sales_total[,2],CONS43_VA[,2],CONS43_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(CONS43_COE, CONS43_sales, CONS43_sales_top, CONS43_sales_total, CONS43_VA)
+```
+
+#Information and commmunication industry
+```{r}
+INFOR <- as.data.table(read_excel("/Users/TKim/Documents/R/DATA/Information.xls",
+                            sheet = "Results",
+                            na = "NA"))[,-c(1,4,5,15,25,35:44)]
+INFOR[,c(2:29)] <- lapply(INFOR[,c(2:29)], as.numeric)
+INFOR$`NACE code`<- as.integer(INFOR$`NACE code` / 100)
+INFOR[INFOR<0] <- NA
+
+
+INFOR_sales <- dplyr::select(INFOR, c(1:11)) %>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08,
+            AVG = mean(c(Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08), na.rm=TRUE),
+            NAs = sum(is.na(c(Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08))))
+
+INFOR_VA <- dplyr::select(INFOR, c(1:2,12:20)) %>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08,
+            AVG = mean(c(VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08), na.rm=TRUE),
+            NAs = sum(is.na(c(VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08))))
+
+INFOR_COE <- dplyr::select(INFOR, c(1,2,21:29))%>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08,
+            AVG = mean(c(COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08), na.rm=TRUE),
+            NAs = sum(is.na(c(COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08))))
+
+
+INFOR_sales_re   <- as.data.table(subset(INFOR_sales,  `NAs` <= 2 & `NAs`> 0))[,-c(12,13)] %>%
+  setnames(c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008")) %>%
+  melt(variable.name = "YEAR", value.name = "Sales")
+
+INFOR_sales_re <- INFOR_sales_re[order(INFOR_sales_re$YEAR, decreasing= T),][order(INFOR_sales_re$Names, decreasing= F),] %>%
+  spread(Names, Sales, fill = NA, convert = T)
+
+INFOR_NACE <- INFOR_sales_re[1,]
+
+INFOR_sales_re <- INFOR_sales_re[order(INFOR_sales_re$YEAR, decreasing= T),][-10,]
+
+INFOR_sales_re <- data.table(ts(INFOR_sales_re, start = c(2008), end = c(2016), frequency = 1)) %>%
+  na.ma(k = 1, weighting = "simple")
+INFOR_sales_re$YEAR <- as.integer(2008:2016)
+INFOR_sales_re <- rbind(INFOR_sales_re,INFOR_NACE) %>%
+  melt(variable.name = "Names", value.name = "Sales") %>%
+  spread(YEAR, Sales, fill = NA, convert = T)
+
+INFOR_sales_NOre <- as.data.table(subset(INFOR_sales,  `NAs` >= 3 | `NAs` == 0 ))
+INFOR_sales_NOre <- data.table(Names = INFOR_sales_NOre$`Company name`,
+                           "2008"= INFOR_sales_NOre$Sales08,
+                           "2009"= INFOR_sales_NOre$Sales09,
+                           "2010"= INFOR_sales_NOre$Sales10,
+                           "2011"= INFOR_sales_NOre$Sales11,
+                           "2012"= INFOR_sales_NOre$Sales12,
+                           "2013"= INFOR_sales_NOre$Sales13,
+                           "2014"= INFOR_sales_NOre$Sales14,
+                           "2015"= INFOR_sales_NOre$Sales15,
+                           "2016"= INFOR_sales_NOre$Sales16,
+                           NACE = INFOR_sales_NOre$`NACE code`)
+INFOR_sales <- rbind(INFOR_sales_NOre,INFOR_sales_re, fill=T)
+INFOR_sales$Names <- as.character(INFOR_sales$Names)
+remove(INFOR_sales_NOre,INFOR_sales_re)
+
+#VA
+
+INFOR_VA_re   <- as.data.table(subset(INFOR_VA,  `NAs` <= 2 & `NAs`> 0))[,-c(12,13)] %>%
+  setnames(c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008")) %>%
+  melt(variable.name = "YEAR", value.name = "VA")
+
+INFOR_VA_re <- INFOR_VA_re[order(INFOR_VA_re$YEAR, decreasing= T),][order(INFOR_VA_re$Names, decreasing= F),] %>%
+  spread(Names, VA, fill = NA, convert = T)
+
+INFOR_NACE <- INFOR_VA_re[1,]
+
+INFOR_VA_re <- INFOR_VA_re[order(INFOR_VA_re$YEAR, decreasing= T),][-10,]
+
+INFOR_VA_re <- data.table(ts(INFOR_VA_re, start = c(2008), end = c(2016), frequency = 1)) %>%
+  na.ma(k = 1, weighting = "simple")
+INFOR_VA_re$YEAR <- as.integer(2008:2016)
+INFOR_VA_re <- rbind(INFOR_VA_re,INFOR_NACE) %>%
+  melt(variable.name = "Names", value.name = "VA") %>%
+  spread(YEAR, VA, fill = NA, convert = T)
+
+INFOR_VA_NOre <- as.data.table(subset(INFOR_VA,  `NAs` >= 3 | `NAs` == 0 ))
+INFOR_VA_NOre <- data.table(Names = INFOR_VA_NOre$`Company name`,
+                        "2008"= INFOR_VA_NOre$VA08,
+                        "2009"= INFOR_VA_NOre$VA09,
+                        "2010"= INFOR_VA_NOre$VA10,
+                        "2011"= INFOR_VA_NOre$VA11,
+                        "2012"= INFOR_VA_NOre$VA12,
+                        "2013"= INFOR_VA_NOre$VA13,
+                        "2014"= INFOR_VA_NOre$VA14,
+                        "2015"= INFOR_VA_NOre$VA15,
+                        "2016"= INFOR_VA_NOre$VA16,
+                        NACE = INFOR_VA_NOre$`NACE code`)
+INFOR_VA <- rbind(INFOR_VA_NOre,INFOR_VA_re, fill=T)
+INFOR_VA$Names <- as.character(INFOR_VA$Names)
+remove(INFOR_VA_NOre,INFOR_VA_re)
+
+#COE
+
+INFOR_COE_re   <- as.data.table(subset(INFOR_COE,  `NAs` <= 2 & `NAs`> 0))[,-c(12,13)] %>%
+  setnames(c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008")) %>%
+  melt(variable.name = "YEAR", value.name = "COE")
+
+INFOR_COE_re <- INFOR_COE_re[order(INFOR_COE_re$YEAR, decreasing= T),][order(INFOR_COE_re$Names, decreasing= F),] %>%
+  spread(Names, COE, fill = NA, convert = T)
+
+INFOR_NACE <- INFOR_COE_re[1,]
+
+INFOR_COE_re <- INFOR_COE_re[order(INFOR_COE_re$YEAR, decreasing= T),][-10,]
+
+INFOR_COE_re <- data.table(ts(INFOR_COE_re, start = c(2008), end = c(2016), frequency = 1)) %>%
+  na.ma(k = 1, weighting = "simple")
+INFOR_COE_re$YEAR <- as.integer(2008:2016)
+INFOR_COE_re <- rbind(INFOR_COE_re,INFOR_NACE) %>%
+  melt(variable.name = "Names", value.name = "COE") %>%
+  spread(YEAR, COE, fill = NA, convert = T)
+
+INFOR_COE_NOre <- as.data.table(subset(INFOR_COE,  `NAs` >= 3 | `NAs` == 0 ))
+INFOR_COE_NOre <- data.table(Names = INFOR_COE_NOre$`Company name`,
+                         "2008"= INFOR_COE_NOre$COE08,
+                         "2009"= INFOR_COE_NOre$COE09,
+                         "2010"= INFOR_COE_NOre$COE10,
+                         "2011"= INFOR_COE_NOre$COE11,
+                         "2012"= INFOR_COE_NOre$COE12,
+                         "2013"= INFOR_COE_NOre$COE13,
+                         "2014"= INFOR_COE_NOre$COE14,
+                         "2015"= INFOR_COE_NOre$COE15,
+                         "2016"= INFOR_COE_NOre$COE16,
+                         NACE = INFOR_COE_NOre$`NACE code`)
+INFOR_COE <- rbind(INFOR_COE_NOre,INFOR_COE_re, fill=T)
+INFOR_COE$Names <- as.character(INFOR_COE$Names)
+remove(INFOR_COE_NOre,INFOR_COE_re,INFOR_NACE)
+
+
+##### HHI INDEX #####
+INFOR_HHI_Total <- melt(INFOR_sales[, lapply(.SD, hhi),.SDcols=c(2:10)],
+                    variable.name = "YEAR", value.name = "INFOR_HHI")
+
+INFOR_HHI_SUB <- melt(INFOR_sales[, lapply(.SD, hhi),by=NACE,.SDcols=c(2:10)],
+                  id="NACE",variable.name = "YEAR", value.name = "INFOR_HHI_SUB")
+
+#Total sum of sales each YEAR, Manufacturing.
+INFOR_sales_total <- INFOR_sales[,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20 / 4 firms
+INFOR_sales_top<- INFOR_sales[, lapply(.SD, TOP_N2), .SDcols=c(2:10)] %>% mutate(Type= as.factor(1:2)) %>% data.table() %>%
+  melt(variable.name = "YEAR", value.name = "Sales")
+
+##VA
+#Total sum of sales each YEAR, Manufacturing.
+INFOR_VA_total <- INFOR_VA[,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)]%>%
+  melt(variable.name = "YEAR", value.name = "VA_total")
+
+
+##COE
+#subset of Cose of employees
+INFOR_COE_total <- INFOR_COE[,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "COE_total")
+
+
+#This is ready to use dataset for Finance industry
+Information <- data.table(YEAR = as.numeric(2008:2016),
+                            Sales_Total= as.numeric(INFOR_sales_total$Sales_total),
+                            Sales20= subset(INFOR_sales_top$Sales,INFOR_sales_top$Type == 1),
+                            Sales4 = subset(INFOR_sales_top$Sales,INFOR_sales_top$Type == 2),
+                            CR20_Sales= subset(INFOR_sales_top$Sales,INFOR_sales_top$Type == 1) / INFOR_sales_total$Sales_total,
+                            CR4_Sales = subset(INFOR_sales_top$Sales,INFOR_sales_top$Type == 2) / INFOR_sales_total$Sales_total,
+                            VA = as.numeric(INFOR_VA_total$VA_total),
+                            COE= as.numeric(INFOR_COE_total$COE_total),
+                            LS =as.numeric(INFOR_COE_total$COE_total / INFOR_VA_total$VA_total),
+                            INFOR_HHI=INFOR_HHI_Total$INFOR_HHI,
+                            stringsAsFactors = F)
+
+
+#drop unnecessary variables
+remove(INFOR_sales_total, INFOR_sales_top, INFOR_COE_total, INFOR_VA_total)
+
+
+#Division 58
+INFOR58_VA <- INFOR_VA[ which(NACE == 58),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+INFOR58_COE <- INFOR_COE[ which(NACE == 58),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "INFOR58_COE")
+
+
+#Sales
+INFOR58_sales <- INFOR_sales[ which(NACE == 58),-c(1,11)]
+INFOR58_sales_total<- INFOR58_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+INFOR58_sales_top<- INFOR58_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+INFOR58 <- data.table(YEAR = as.integer(2008:2016),
+                  INFOR58_CR4    = subset(INFOR58_sales_top$Sales, INFOR58_sales_top$Type == 2) / INFOR58_sales_total$Sales_total,
+                  INFOR58_CR20   = subset(INFOR58_sales_top$Sales, INFOR58_sales_top$Type == 1) / INFOR58_sales_total$Sales_total,
+                  INFOR58_LS     = INFOR58_COE$INFOR58_COE / INFOR58_VA$VA_total,
+                  INFOR58_HHI    = subset(INFOR_HHI_SUB$INFOR_HHI_SUB, INFOR_HHI_SUB$NACE == 58),
+                  INFOR58_top4_sales = subset(INFOR58_sales_top$Sales, INFOR58_sales_top$Type == 2),
+                  INFOR58_top20_sales = subset(INFOR58_sales_top$Sales, INFOR58_sales_top$Type == 1),
+                  cbind(INFOR58_sales_total[,2],INFOR58_VA[,2],INFOR58_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(INFOR58_COE, INFOR58_sales, INFOR58_sales_top, INFOR58_sales_total, INFOR58_VA)
+
+
+#Division 59
+INFOR59_VA <- INFOR_VA[ which(NACE == 59),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+INFOR59_COE <- INFOR_COE[ which(NACE == 59),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "INFOR59_COE")
+
+
+#Sales
+INFOR59_sales <- INFOR_sales[ which(NACE == 59),-c(1,11)]
+INFOR59_sales_total<- INFOR59_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+INFOR59_sales_top<- INFOR59_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+INFOR59 <- data.table(YEAR = as.integer(2008:2016),
+                  INFOR59_CR4    = subset(INFOR59_sales_top$Sales, INFOR59_sales_top$Type == 2) / INFOR59_sales_total$Sales_total,
+                  INFOR59_CR20   = subset(INFOR59_sales_top$Sales, INFOR59_sales_top$Type == 1) / INFOR59_sales_total$Sales_total,
+                  INFOR59_LS     = INFOR59_COE$INFOR59_COE / INFOR59_VA$VA_total,
+                  INFOR59_HHI    = subset(INFOR_HHI_SUB$INFOR_HHI_SUB, INFOR_HHI_SUB$NACE == 59),
+                  INFOR59_top4_sales = subset(INFOR59_sales_top$Sales, INFOR59_sales_top$Type == 2),
+                  INFOR59_top20_sales = subset(INFOR59_sales_top$Sales, INFOR59_sales_top$Type == 1),
+                  cbind(INFOR59_sales_total[,2],INFOR59_VA[,2],INFOR59_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(INFOR59_COE, INFOR59_sales, INFOR59_sales_top, INFOR59_sales_total, INFOR59_VA)
+
+
+#Division 60
+INFOR60_VA <- INFOR_VA[ which(NACE == 60),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+INFOR60_COE <- INFOR_COE[ which(NACE == 60),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "INFOR60_COE")
+
+
+#Sales
+INFOR60_sales <- INFOR_sales[ which(NACE == 60),-c(1,11)]
+INFOR60_sales_total<- INFOR60_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+INFOR60_sales_top<- INFOR60_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+INFOR60 <- data.table(YEAR = as.integer(2008:2016),
+                  INFOR60_CR4    = subset(INFOR60_sales_top$Sales, INFOR60_sales_top$Type == 2) / INFOR60_sales_total$Sales_total,
+                  INFOR60_CR20   = subset(INFOR60_sales_top$Sales, INFOR60_sales_top$Type == 1) / INFOR60_sales_total$Sales_total,
+                  INFOR60_LS     = INFOR60_COE$INFOR60_COE / INFOR60_VA$VA_total,
+                  INFOR60_HHI    = subset(INFOR_HHI_SUB$INFOR_HHI_SUB, INFOR_HHI_SUB$NACE == 60),
+                  INFOR60_top4_sales = subset(INFOR60_sales_top$Sales, INFOR60_sales_top$Type == 2),
+                  INFOR60_top20_sales = subset(INFOR60_sales_top$Sales, INFOR60_sales_top$Type == 1),
+                  cbind(INFOR60_sales_total[,2],INFOR60_VA[,2],INFOR60_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(INFOR60_COE, INFOR60_sales, INFOR60_sales_top, INFOR60_sales_total, INFOR60_VA)
+
+
+#Division 61
+INFOR61_VA <- INFOR_VA[ which(NACE == 61),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+INFOR61_COE <- INFOR_COE[ which(NACE == 61),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "INFOR61_COE")
+
+
+#Sales
+INFOR61_sales <- INFOR_sales[ which(NACE == 61),-c(1,11)]
+INFOR61_sales_total<- INFOR61_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+INFOR61_sales_top<- INFOR61_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+INFOR61 <- data.table(YEAR = as.integer(2008:2016),
+                  INFOR61_CR4    = subset(INFOR61_sales_top$Sales, INFOR61_sales_top$Type == 2) / INFOR61_sales_total$Sales_total,
+                  INFOR61_CR20   = subset(INFOR61_sales_top$Sales, INFOR61_sales_top$Type == 1) / INFOR61_sales_total$Sales_total,
+                  INFOR61_LS     = INFOR61_COE$INFOR61_COE / INFOR61_VA$VA_total,
+                  INFOR61_HHI    = subset(INFOR_HHI_SUB$INFOR_HHI_SUB, INFOR_HHI_SUB$NACE == 61),
+                  INFOR61_top4_sales = subset(INFOR61_sales_top$Sales, INFOR61_sales_top$Type == 2),
+                  INFOR61_top20_sales = subset(INFOR61_sales_top$Sales, INFOR61_sales_top$Type == 1),
+                  cbind(INFOR61_sales_total[,2],INFOR61_VA[,2],INFOR61_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(INFOR61_COE, INFOR61_sales, INFOR61_sales_top, INFOR61_sales_total, INFOR61_VA)
+
+
+
+#Division 62
+INFOR62_VA <- INFOR_VA[ which(NACE == 62),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+INFOR62_COE <- INFOR_COE[ which(NACE == 62),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "INFOR62_COE")
+
+
+#Sales
+INFOR62_sales <- INFOR_sales[ which(NACE == 62),-c(1,11)]
+INFOR62_sales_total<- INFOR62_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+INFOR62_sales_top<- INFOR62_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+INFOR62 <- data.table(YEAR = as.integer(2008:2016),
+                  INFOR62_CR4    = subset(INFOR62_sales_top$Sales, INFOR62_sales_top$Type == 2) / INFOR62_sales_total$Sales_total,
+                  INFOR62_CR20   = subset(INFOR62_sales_top$Sales, INFOR62_sales_top$Type == 1) / INFOR62_sales_total$Sales_total,
+                  INFOR62_LS     = INFOR62_COE$INFOR62_COE / INFOR62_VA$VA_total,
+                  INFOR62_HHI    = subset(INFOR_HHI_SUB$INFOR_HHI_SUB, INFOR_HHI_SUB$NACE == 62),
+                  INFOR62_top4_sales = subset(INFOR62_sales_top$Sales, INFOR62_sales_top$Type == 2),
+                  INFOR62_top20_sales = subset(INFOR62_sales_top$Sales, INFOR62_sales_top$Type == 1),
+                  cbind(INFOR62_sales_total[,2],INFOR62_VA[,2],INFOR62_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(INFOR62_COE, INFOR62_sales, INFOR62_sales_top, INFOR62_sales_total, INFOR62_VA)
+
+
+
+#Division 63
+INFOR63_VA <- INFOR_VA[ which(NACE == 63),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+INFOR63_COE <- INFOR_COE[ which(NACE == 63),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "INFOR63_COE")
+
+
+#Sales
+INFOR63_sales <- INFOR_sales[ which(NACE == 63),-c(1,11)]
+INFOR63_sales_total<- INFOR63_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+INFOR63_sales_top<- INFOR63_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+INFOR63 <- data.table(YEAR = as.integer(2008:2016),
+                  INFOR63_CR4    = subset(INFOR63_sales_top$Sales, INFOR63_sales_top$Type == 2) / INFOR63_sales_total$Sales_total,
+                  INFOR63_CR20   = subset(INFOR63_sales_top$Sales, INFOR63_sales_top$Type == 1) / INFOR63_sales_total$Sales_total,
+                  INFOR63_LS     = INFOR63_COE$INFOR63_COE / INFOR63_VA$VA_total,
+                  INFOR63_HHI    = subset(INFOR_HHI_SUB$INFOR_HHI_SUB, INFOR_HHI_SUB$NACE == 63),
+                  INFOR63_top4_sales = subset(INFOR63_sales_top$Sales, INFOR63_sales_top$Type == 2),
+                  INFOR63_top20_sales = subset(INFOR63_sales_top$Sales, INFOR63_sales_top$Type == 1),
+                  cbind(INFOR63_sales_total[,2],INFOR63_VA[,2],INFOR63_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(INFOR63_COE, INFOR63_sales, INFOR63_sales_top, INFOR63_sales_total, INFOR63_VA)
+```
+
+#Finance and Insutrance activity
+```{r}
+FI <- as.data.table(read_excel("/Users/TKim/Documents/R/DATA/Finance.xls",
+                            sheet = "Results",
+                            na = "NA"))[,-c(1,4,5,15,25,35:44)]
+FI[,c(2:29)] <- lapply(FI[,c(2:29)], as.numeric)
+FI$`NACE code`<- as.integer(FI$`NACE code` / 100)
+FI[FI<0] <- NA
+
+
+FI_sales <- dplyr::select(FI, c(1:11)) %>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08,
+            AVG = mean(c(Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08), na.rm=TRUE),
+            NAs = sum(is.na(c(Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08))))
+
+FI_VA <- dplyr::select(FI, c(1:2,12:20)) %>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08,
+            AVG = mean(c(VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08), na.rm=TRUE),
+            NAs = sum(is.na(c(VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08))))
+
+FI_COE <- dplyr::select(FI, c(1,2,21:29))%>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08,
+            AVG = mean(c(COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08), na.rm=TRUE),
+            NAs = sum(is.na(c(COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08))))
+
+
+FI_sales_re   <- as.data.table(subset(FI_sales,  `NAs` <= 2 & `NAs`> 0))[,-c(12,13)] %>%
+  setnames(c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008")) %>%
+  melt(variable.name = "YEAR", value.name = "Sales")
+
+FI_sales_re <- FI_sales_re[order(FI_sales_re$YEAR, decreasing= T),][order(FI_sales_re$Names, decreasing= F),] %>%
+  spread(Names, Sales, fill = NA, convert = T)
+
+FI_NACE <- FI_sales_re[1,]
+
+FI_sales_re <- FI_sales_re[order(FI_sales_re$YEAR, decreasing= T),][-10,]
+
+FI_sales_re <- data.table(ts(FI_sales_re, start = c(2008), end = c(2016), frequency = 1)) %>%
+  na.ma(k = 1, weighting = "simple")
+FI_sales_re$YEAR <- as.integer(2008:2016)
+FI_sales_re <- rbind(FI_sales_re,FI_NACE) %>%
+  melt(variable.name = "Names", value.name = "Sales") %>%
+  spread(YEAR, Sales, fill = NA, convert = T)
+
+FI_sales_NOre <- as.data.table(subset(FI_sales,  `NAs` >= 3 | `NAs` == 0 ))
+FI_sales_NOre <- data.table(Names = FI_sales_NOre$`Company name`,
+                           "2008"= FI_sales_NOre$Sales08,
+                           "2009"= FI_sales_NOre$Sales09,
+                           "2010"= FI_sales_NOre$Sales10,
+                           "2011"= FI_sales_NOre$Sales11,
+                           "2012"= FI_sales_NOre$Sales12,
+                           "2013"= FI_sales_NOre$Sales13,
+                           "2014"= FI_sales_NOre$Sales14,
+                           "2015"= FI_sales_NOre$Sales15,
+                           "2016"= FI_sales_NOre$Sales16,
+                           NACE = FI_sales_NOre$`NACE code`)
+FI_sales <- rbind(FI_sales_NOre,FI_sales_re, fill=T)
+FI_sales$Names <- as.character(FI_sales$Names)
+remove(FI_sales_NOre,FI_sales_re)
+
+#VA
+
+FI_VA_re   <- as.data.table(subset(FI_VA,  `NAs` <= 2 & `NAs`> 0))[,-c(12,13)] %>%
+  setnames(c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008")) %>%
+  melt(variable.name = "YEAR", value.name = "VA")
+
+FI_VA_re <- FI_VA_re[order(FI_VA_re$YEAR, decreasing= T),][order(FI_VA_re$Names, decreasing= F),] %>%
+  spread(Names, VA, fill = NA, convert = T)
+
+FI_NACE <- FI_VA_re[1,]
+
+FI_VA_re <- FI_VA_re[order(FI_VA_re$YEAR, decreasing= T),][-10,]
+
+FI_VA_re <- data.table(ts(FI_VA_re, start = c(2008), end = c(2016), frequency = 1)) %>%
+  na.ma(k = 1, weighting = "simple")
+FI_VA_re$YEAR <- as.integer(2008:2016)
+FI_VA_re <- rbind(FI_VA_re,FI_NACE) %>%
+  melt(variable.name = "Names", value.name = "VA") %>%
+  spread(YEAR, VA, fill = NA, convert = T)
+
+FI_VA_NOre <- as.data.table(subset(FI_VA,  `NAs` >= 3 | `NAs` == 0 ))
+FI_VA_NOre <- data.table(Names = FI_VA_NOre$`Company name`,
+                        "2008"= FI_VA_NOre$VA08,
+                        "2009"= FI_VA_NOre$VA09,
+                        "2010"= FI_VA_NOre$VA10,
+                        "2011"= FI_VA_NOre$VA11,
+                        "2012"= FI_VA_NOre$VA12,
+                        "2013"= FI_VA_NOre$VA13,
+                        "2014"= FI_VA_NOre$VA14,
+                        "2015"= FI_VA_NOre$VA15,
+                        "2016"= FI_VA_NOre$VA16,
+                        NACE = FI_VA_NOre$`NACE code`)
+FI_VA <- rbind(FI_VA_NOre,FI_VA_re, fill=T)
+FI_VA$Names <- as.character(FI_VA$Names)
+remove(FI_VA_NOre,FI_VA_re)
+
+#COE
+
+FI_COE_re   <- as.data.table(subset(FI_COE,  `NAs` <= 2 & `NAs`> 0))[,-c(12,13)] %>%
+  setnames(c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008")) %>%
+  melt(variable.name = "YEAR", value.name = "COE")
+
+FI_COE_re <- FI_COE_re[order(FI_COE_re$YEAR, decreasing= T),][order(FI_COE_re$Names, decreasing= F),] %>%
+  spread(Names, COE, fill = NA, convert = T)
+
+FI_NACE <- FI_COE_re[1,]
+
+FI_COE_re <- FI_COE_re[order(FI_COE_re$YEAR, decreasing= T),][-10,]
+
+FI_COE_re <- data.table(ts(FI_COE_re, start = c(2008), end = c(2016), frequency = 1)) %>%
+  na.ma(k = 1, weighting = "simple")
+FI_COE_re$YEAR <- as.integer(2008:2016)
+FI_COE_re <- rbind(FI_COE_re,FI_NACE) %>%
+  melt(variable.name = "Names", value.name = "COE") %>%
+  spread(YEAR, COE, fill = NA, convert = T)
+
+FI_COE_NOre <- as.data.table(subset(FI_COE,  `NAs` >= 3 | `NAs` == 0 ))
+FI_COE_NOre <- data.table(Names = FI_COE_NOre$`Company name`,
+                         "2008"= FI_COE_NOre$COE08,
+                         "2009"= FI_COE_NOre$COE09,
+                         "2010"= FI_COE_NOre$COE10,
+                         "2011"= FI_COE_NOre$COE11,
+                         "2012"= FI_COE_NOre$COE12,
+                         "2013"= FI_COE_NOre$COE13,
+                         "2014"= FI_COE_NOre$COE14,
+                         "2015"= FI_COE_NOre$COE15,
+                         "2016"= FI_COE_NOre$COE16,
+                         NACE = FI_COE_NOre$`NACE code`)
+FI_COE <- rbind(FI_COE_NOre,FI_COE_re, fill=T)
+FI_COE$Names <- as.character(FI_COE$Names)
+remove(FI_COE_NOre,FI_COE_re,FI_NACE)
+
+
+##### HHI INDEX #####
+FI_HHI_Total <- melt(FI_sales[, lapply(.SD, hhi),.SDcols=c(2:10)],
+                    variable.name = "YEAR", value.name = "FI_HHI")
+
+FI_HHI_SUB <- melt(FI_sales[, lapply(.SD, hhi),by=NACE,.SDcols=c(2:10)],
+                  id="NACE",variable.name = "YEAR", value.name = "FI_HHI_SUB")
+
+#Total sum of sales each YEAR, Manufacturing.
+FI_sales_total <- FI_sales[,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20 / 4 firms
+FI_sales_top<- FI_sales[, lapply(.SD, TOP_N2), .SDcols=c(2:10)] %>% mutate(Type= as.factor(1:2)) %>% data.table() %>%
+  melt(variable.name = "YEAR", value.name = "Sales")
+
+##VA
+#Total sum of sales each YEAR, Manufacturing.
+FI_VA_total <- FI_VA[,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)]%>%
+  melt(variable.name = "YEAR", value.name = "VA_total")
+
+
+##COE
+#subset of Cose of employees
+FI_COE_total <- FI_COE[,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "COE_total")
+
+
+#This is ready to use dataset for Finance industry
+Finance <- data.table(YEAR = as.numeric(2008:2016),
+                            Sales_Total= as.numeric(FI_sales_total$Sales_total),
+                            Sales20= subset(FI_sales_top$Sales,FI_sales_top$Type == 1),
+                            Sales4 = subset(FI_sales_top$Sales,FI_sales_top$Type == 2),
+                            CR20_Sales= subset(FI_sales_top$Sales,FI_sales_top$Type == 1) / FI_sales_total$Sales_total,
+                            CR4_Sales = subset(FI_sales_top$Sales,FI_sales_top$Type == 2) / FI_sales_total$Sales_total,
+                            VA = as.numeric(FI_VA_total$VA_total),
+                            COE= as.numeric(FI_COE_total$COE_total),
+                            LS =as.numeric(FI_COE_total$COE_total / FI_VA_total$VA_total),
+                            FI_HHI=FI_HHI_Total$FI_HHI,
+                            stringsAsFactors = F)
+
+
+#drop unnecessary variables
+remove(FI_sales_total, FI_sales_top, FI_COE_total, FI_VA_total)
+
+
+#Sub-sector analysis
+
+#Division 64 : Financial service activities, except insurance and pension funding
+#Division 65 : Insurance, reinsurance and pension funding, except compulsorysocial security
+#No company in this section
+#Division 66 : Activities auxiliary to  nancial services and insurance activities
+
+#Division 64 : Financial service activities, except insurance and pension funding
+FI64_VA <- FI_VA[ which(NACE == 64),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+FI64_COE <- FI_COE[ which(NACE == 64),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "FI64_COE")
+
+
+#Sales
+FI64_sales <- FI_sales[ which(NACE == 64),-c(1,11)]
+FI64_sales_total<- FI64_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+FI64_sales_top<- FI64_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+FI64 <- data.table(YEAR = as.integer(2008:2016),
+                  FI64_CR4    = subset(FI64_sales_top$Sales, FI64_sales_top$Type == 2) / FI64_sales_total$Sales_total,
+                  FI64_CR20   = subset(FI64_sales_top$Sales, FI64_sales_top$Type == 1) / FI64_sales_total$Sales_total,
+                  FI64_LS     = FI64_COE$FI64_COE / FI64_VA$VA_total,
+                  FI64_HHI    = subset(FI_HHI_SUB$FI_HHI_SUB, FI_HHI_SUB$NACE == 64),
+                  FI64_top4_sales = subset(FI64_sales_top$Sales, FI64_sales_top$Type == 2),
+                  FI64_top20_sales = subset(FI64_sales_top$Sales, FI64_sales_top$Type == 1),
+                  cbind(FI64_sales_total[,2],FI64_VA[,2],FI64_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(FI64_COE, FI64_sales, FI64_sales_top, FI64_sales_total, FI64_VA)
+
+#Division 66 : Activities auxiliary to  nancial services and insurance activities
+FI66_VA <- FI_VA[ which(NACE == 66),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+FI66_COE <- FI_COE[ which(NACE == 66),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "FI66_COE")
+
+
+#Sales
+FI66_sales <- FI_sales[ which(NACE == 66),-c(1,11)]
+FI66_sales_total<- FI66_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+FI66_sales_top<- FI66_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+FI66 <- data.table(YEAR = as.integer(2008:2016),
+                  FI66_CR4    = subset(FI66_sales_top$Sales, FI66_sales_top$Type == 2) / FI66_sales_total$Sales_total,
+                  FI66_CR20   = subset(FI66_sales_top$Sales, FI66_sales_top$Type == 1) / FI66_sales_total$Sales_total,
+                  FI66_LS     = FI66_COE$FI66_COE / FI66_VA$VA_total,
+                  FI66_HHI    = subset(FI_HHI_SUB$FI_HHI_SUB, FI_HHI_SUB$NACE == 66),
+                  FI66_top4_sales = subset(FI66_sales_top$Sales, FI66_sales_top$Type == 2),
+                  FI66_top20_sales = subset(FI66_sales_top$Sales, FI66_sales_top$Type == 1),
+                  cbind(FI66_sales_total[,2],FI66_VA[,2],FI66_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(FI66_COE, FI66_sales, FI66_sales_top, FI66_sales_total, FI66_VA)
+```
+
+#Wholesale
+```{r}
+WHOLE <- as.data.table(read_excel("/Users/TKim/Documents/R/DATA/wholesales.xlsx",
+                            sheet = "Results",
+                            na = "NA"))[,-c(1,4,5,15,25,35:44)]
+WHOLE[,c(2:29)] <- lapply(WHOLE[,c(2:29)], as.numeric)
+WHOLE$`NACE code`<- as.integer(WHOLE$`NACE code` / 100)
+WHOLE[WHOLE<0] <- NA
+
+##### Imputation ####
+###WHOLESALES###
+WHOLE <- WHOLE[order(WHOLE$`Company name`, decreasing= F),]
+WHOLE[382,1] <- "ALLIANCE AUTOMOBILES 2"
+WHOLE[7039,1] <- "MAP 2"
+WHOLE[7285,1] <- "MERCIER 2"
+WHOLE[7078,1] <-"MARIDIS 2"
+WHOLE[6897,1] <- "MABEL 2"
+WHOLE[6308,1] <- "LABENNE ROUGIER 2"
+WHOLE[10700,1] <- "SODIFAV 2"
+WHOLE[2490,1] <- "COMPTOIR DU FREIN 2"
+
+WHOLE_sales <- dplyr::select(WHOLE, c(1:11)) %>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08,
+            AVG = mean(c(Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08), na.rm=TRUE),
+            NAs = sum(is.na(c(Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08))))
+
+WHOLE_VA <- dplyr::select(WHOLE, c(1:2,12:20)) %>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08,
+            AVG = mean(c(VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08), na.rm=TRUE),
+            NAs = sum(is.na(c(VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08))))
+
+WHOLE_COE <- dplyr::select(WHOLE, c(1,2,21:29))%>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08,
+            AVG = mean(c(COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08), na.rm=TRUE),
+            NAs = sum(is.na(c(COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08))))
+
+#Sales
+
+WHOLE_sales_re      <- as.data.table(subset(WHOLE_sales,  `NAs` <= 2 & `NAs`> 0 ))
+WHOLE_sales_re45    <- WHOLE_sales_re[ which(`NACE code`== 45),]
+WHOLE_sales_re467   <- WHOLE_sales_re[ which(`NACE code`== 46 | `NACE code`== 47),]
+
+WHOLE_sales_NOre1 <- as.data.table(subset(WHOLE_sales,  `NAs` > 2 ))
+WHOLE_sales_NOre2 <- as.data.table(subset(WHOLE_sales,  `NAs` == 0))
+WHOLE_sales_NOre <- as.data.table(rbind(WHOLE_sales_NOre1,WHOLE_sales_NOre2))
+remove(WHOLE_sales_NOre1,WHOLE_sales_NOre2)
+
+WHOLE_sales_re45 <- WHOLE_sales_re45[,-c(12,13)]
+WHOLE_sales_re467 <- WHOLE_sales_re467[,-c(12,13)]
+
+setnames(WHOLE_sales_re45, c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008"))
+WHOLE_sales_re45<- melt(WHOLE_sales_re45, variable.name = "YEAR", value.name = "Sales")
+setnames(WHOLE_sales_re467, c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008"))
+WHOLE_sales_re467<- melt(WHOLE_sales_re467, variable.name = "YEAR", value.name = "Sales")
+
+WHOLE_sales_re45 <- WHOLE_sales_re45[order(WHOLE_sales_re45$YEAR
+                                           , decreasing= T),]
+WHOLE_sales_re45 <- WHOLE_sales_re45[order(WHOLE_sales_re45$Names
+                                           , decreasing= F),]
+
+WHOLE_sales_re467 <- WHOLE_sales_re467[order(WHOLE_sales_re467$YEAR
+                                             , decreasing= T),]
+WHOLE_sales_re467 <- WHOLE_sales_re467[order(WHOLE_sales_re467$Names
+                                             , decreasing= F),]
+## 45
+WHOLE_sales_re45 <- WHOLE_sales_re45 %>% spread(Names, Sales, fill = NA, convert = T)
+WHOLE_sales_re45_NACE <- WHOLE_sales_re45[1,]
+WHOLE_sales_re45 <- WHOLE_sales_re45[-1,]
+WHOLE_sales_re45 <- WHOLE_sales_re45[order(WHOLE_sales_re45$YEAR
+                                           , decreasing= T),]
+WHOLE_sales_re45 <- data.table(ts(WHOLE_sales_re45, start = c(2008), end = c(2016), frequency = 1))
+WHOLE_sales_re45 <- na.ma(WHOLE_sales_re45, k = 1, weighting = "simple")
+WHOLE_sales_re45$YEAR <- as.integer(2008:2016)
+WHOLE_sales_re45 <- rbind(WHOLE_sales_re45,WHOLE_sales_re45_NACE)
+
+WHOLE_sales_re45 <- melt(WHOLE_sales_re45,variable.name = "Names", value.name = "Sales")
+WHOLE_sales_re45 <- WHOLE_sales_re45 %>% spread(YEAR, Sales, fill = NA, convert = T)
+
+## 46,47
+WHOLE_sales_re467 <- WHOLE_sales_re467 %>% spread(Names, Sales, fill = NA, convert = T)
+WHOLE_sales_re467_NACE <- WHOLE_sales_re467[1,]
+WHOLE_sales_re467 <- WHOLE_sales_re467[-1,]
+WHOLE_sales_re467 <- WHOLE_sales_re467[order(WHOLE_sales_re467$YEAR
+                                             , decreasing= T),]
+WHOLE_sales_re467 <- data.table(ts(WHOLE_sales_re467, start = c(2008), end = c(2016), frequency = 1))
+WHOLE_sales_re467 <- na.ma(WHOLE_sales_re467, k = 1, weighting = "simple")
+WHOLE_sales_re467$YEAR <- as.integer(2008:2016)
+WHOLE_sales_re467 <- rbind(WHOLE_sales_re467,WHOLE_sales_re467_NACE)
+
+WHOLE_sales_re467 <- melt(WHOLE_sales_re467,variable.name = "Names", value.name = "Sales")
+WHOLE_sales_re467 <- WHOLE_sales_re467 %>% spread(YEAR, Sales, fill = NA, convert = T)
+
+WHOLE_sales_re <- rbind(WHOLE_sales_re45,WHOLE_sales_re467)
+
+WHOLE_sales_NOre <- data.frame( Names = WHOLE_sales_NOre$`Company name`,
+                                "2008"= WHOLE_sales_NOre$Sales08,
+                                "2009"= WHOLE_sales_NOre$Sales09,
+                                "2010"= WHOLE_sales_NOre$Sales10,
+                                "2011"= WHOLE_sales_NOre$Sales11,
+                                "2012"= WHOLE_sales_NOre$Sales12,
+                                "2013"= WHOLE_sales_NOre$Sales13,
+                                "2014"= WHOLE_sales_NOre$Sales14,
+                                "2015"= WHOLE_sales_NOre$Sales15,
+                                "2016"= WHOLE_sales_NOre$Sales16,
+                                NACE = WHOLE_sales_NOre$`NACE code`)
+setnames(WHOLE_sales_NOre, c(1:11), c("Names","2008","2009","2010","2011","2012","2013","2014","2015","2016","NACE"))
+WHOLE_sales <- rbind(WHOLE_sales_NOre,WHOLE_sales_re,fill=T)
+WHOLE_sales$Names <- as.character(WHOLE_sales$Names)
+remove(WHOLE_sales_NOre,WHOLE_sales_re,WHOLE_sales_re467_NACE,WHOLE_sales_re45_NACE,
+       WHOLE_sales_re467,WHOLE_sales_re45)
+
+#VA
+
+WHOLE_VA_re      <- as.data.table(subset(WHOLE_VA,  `NAs` <= 2 & `NAs`> 0))
+WHOLE_VA_re45    <- WHOLE_VA_re[ which(`NACE code`== 45),]
+WHOLE_VA_re467   <- WHOLE_VA_re[ which(`NACE code`== 46 | `NACE code`== 47),]
+
+WHOLE_VA_NOre1 <- as.data.table(subset(WHOLE_VA,  `NAs` > 2 ))
+WHOLE_VA_NOre2 <- as.data.table(subset(WHOLE_VA,  `NAs` == 0))
+WHOLE_VA_NOre <- as.data.table(rbind(WHOLE_VA_NOre1,WHOLE_VA_NOre2))
+remove(WHOLE_VA_NOre1,WHOLE_VA_NOre2)
+
+WHOLE_VA_re45 <- WHOLE_VA_re45[,-c(12,13)]
+WHOLE_VA_re467 <- WHOLE_VA_re467[,-c(12,13)]
+
+setnames(WHOLE_VA_re45, c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008"))
+WHOLE_VA_re45<- melt(WHOLE_VA_re45, variable.name = "YEAR", value.name = "VA")
+setnames(WHOLE_VA_re467, c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008"))
+WHOLE_VA_re467<- melt(WHOLE_VA_re467, variable.name = "YEAR", value.name = "VA")
+
+WHOLE_VA_re45 <- WHOLE_VA_re45[order(WHOLE_VA_re45$YEAR
+                                     , decreasing= T),]
+WHOLE_VA_re45 <- WHOLE_VA_re45[order(WHOLE_VA_re45$Names
+                                     , decreasing= F),]
+
+WHOLE_VA_re467 <- WHOLE_VA_re467[order(WHOLE_VA_re467$YEAR
+                                       , decreasing= T),]
+WHOLE_VA_re467 <- WHOLE_VA_re467[order(WHOLE_VA_re467$Names
+                                       , decreasing= F),]
+## 45
+WHOLE_VA_re45 <- WHOLE_VA_re45 %>% spread(Names, VA, fill = NA, convert = T)
+WHOLE_VA_re45_NACE <- WHOLE_VA_re45[1,]
+WHOLE_VA_re45 <- WHOLE_VA_re45[-1,]
+WHOLE_VA_re45 <- WHOLE_VA_re45[order(WHOLE_VA_re45$YEAR
+                                     , decreasing= T),]
+WHOLE_VA_re45 <- data.table(ts(WHOLE_VA_re45, start = c(2008), end = c(2016), frequency = 1))
+WHOLE_VA_re45 <- na.ma(WHOLE_VA_re45, k = 1, weighting = "simple")
+WHOLE_VA_re45$YEAR <- as.integer(2008:2016)
+WHOLE_VA_re45 <- rbind(WHOLE_VA_re45,WHOLE_VA_re45_NACE)
+
+WHOLE_VA_re45 <- melt(WHOLE_VA_re45,variable.name = "Names", value.name = "VA")
+WHOLE_VA_re45 <- WHOLE_VA_re45 %>% spread(YEAR, VA, fill = NA, convert = T)
+
+## 46,47
+WHOLE_VA_re467 <- WHOLE_VA_re467 %>% spread(Names, VA, fill = NA, convert = T)
+WHOLE_VA_re467_NACE <- WHOLE_VA_re467[1,]
+WHOLE_VA_re467 <- WHOLE_VA_re467[-1,]
+WHOLE_VA_re467 <- WHOLE_VA_re467[order(WHOLE_VA_re467$YEAR
+                                       , decreasing= T),]
+WHOLE_VA_re467 <- data.table(ts(WHOLE_VA_re467, start = c(2008), end = c(2016), frequency = 1))
+WHOLE_VA_re467 <- na.ma(WHOLE_VA_re467, k = 1, weighting = "simple")
+WHOLE_VA_re467$YEAR <- as.integer(2008:2016)
+WHOLE_VA_re467 <- rbind(WHOLE_VA_re467,WHOLE_VA_re467_NACE)
+
+WHOLE_VA_re467 <- melt(WHOLE_VA_re467,variable.name = "Names", value.name = "VA")
+WHOLE_VA_re467 <- WHOLE_VA_re467 %>% spread(YEAR, VA, fill = NA, convert = T)
+
+WHOLE_VA_re <- rbind(WHOLE_VA_re45,WHOLE_VA_re467)
+
+WHOLE_VA_NOre <- data.frame( Names = WHOLE_VA_NOre$`Company name`,
+                             "2008"= WHOLE_VA_NOre$VA08,
+                             "2009"= WHOLE_VA_NOre$VA09,
+                             "2010"= WHOLE_VA_NOre$VA10,
+                             "2011"= WHOLE_VA_NOre$VA11,
+                             "2012"= WHOLE_VA_NOre$VA12,
+                             "2013"= WHOLE_VA_NOre$VA13,
+                             "2014"= WHOLE_VA_NOre$VA14,
+                             "2015"= WHOLE_VA_NOre$VA15,
+                             "2016"= WHOLE_VA_NOre$VA16,
+                             NACE = WHOLE_VA_NOre$`NACE code`)
+setnames(WHOLE_VA_NOre, c(1:11), c("Names","2008","2009","2010","2011","2012","2013","2014","2015","2016","NACE"))
+WHOLE_VA <- rbind(WHOLE_VA_NOre,WHOLE_VA_re,fill=T)
+WHOLE_VA$Names <- as.character(WHOLE_VA$Names)
+remove(WHOLE_VA_NOre,WHOLE_VA_re,WHOLE_VA_re467_NACE,WHOLE_VA_re45_NACE,
+       WHOLE_VA_re467,WHOLE_VA_re45)
+
+#COE
+
+WHOLE_COE_re      <- as.data.table(subset(WHOLE_COE,  `NAs` <= 2 & `NAs`> 0 ))
+WHOLE_COE_re45    <- WHOLE_COE_re[ which(`NACE code`== 45),]
+WHOLE_COE_re467   <- WHOLE_COE_re[ which(`NACE code`== 46 | `NACE code`== 47),]
+
+WHOLE_COE_NOre1 <- as.data.table(subset(WHOLE_COE,  `NAs` > 2 ))
+WHOLE_COE_NOre2 <- as.data.table(subset(WHOLE_COE,  `NAs` == 0 ))
+WHOLE_COE_NOre <- as.data.table(rbind(WHOLE_COE_NOre1,WHOLE_COE_NOre2))
+remove(WHOLE_COE_NOre1,WHOLE_COE_NOre2)
+
+WHOLE_COE_re45 <- WHOLE_COE_re45[,-c(12,13)]
+WHOLE_COE_re467 <- WHOLE_COE_re467[,-c(12,13)]
+
+setnames(WHOLE_COE_re45, c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008"))
+WHOLE_COE_re45<- melt(WHOLE_COE_re45, variable.name = "YEAR", value.name = "COE")
+setnames(WHOLE_COE_re467, c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008"))
+WHOLE_COE_re467<- melt(WHOLE_COE_re467, variable.name = "YEAR", value.name = "COE")
+
+WHOLE_COE_re45 <- WHOLE_COE_re45[order(WHOLE_COE_re45$YEAR
+                                       , decreasing= T),]
+WHOLE_COE_re45 <- WHOLE_COE_re45[order(WHOLE_COE_re45$Names
+                                       , decreasing= F),]
+
+WHOLE_COE_re467 <- WHOLE_COE_re467[order(WHOLE_COE_re467$YEAR
+                                         , decreasing= T),]
+WHOLE_COE_re467 <- WHOLE_COE_re467[order(WHOLE_COE_re467$Names
+                                         , decreasing= F),]
+## 45
+WHOLE_COE_re45 <- WHOLE_COE_re45 %>% spread(Names, COE, fill = NA, convert = T)
+WHOLE_COE_re45_NACE <- WHOLE_COE_re45[1,]
+WHOLE_COE_re45 <- WHOLE_COE_re45[-1,]
+WHOLE_COE_re45 <- WHOLE_COE_re45[order(WHOLE_COE_re45$YEAR
+                                       , decreasing= T),]
+WHOLE_COE_re45 <- data.table(ts(WHOLE_COE_re45, start = c(2008), end = c(2016), frequency = 1))
+WHOLE_COE_re45 <- na.ma(WHOLE_COE_re45, k = 1, weighting = "simple")
+WHOLE_COE_re45$YEAR <- as.integer(2008:2016)
+WHOLE_COE_re45 <- rbind(WHOLE_COE_re45,WHOLE_COE_re45_NACE)
+
+WHOLE_COE_re45 <- melt(WHOLE_COE_re45,variable.name = "Names", value.name = "COE")
+WHOLE_COE_re45 <- WHOLE_COE_re45 %>% spread(YEAR, COE, fill = NA, convert = T)
+
+## 46,47
+WHOLE_COE_re467 <- WHOLE_COE_re467 %>% spread(Names, COE, fill = NA, convert = T)
+WHOLE_COE_re467_NACE <- WHOLE_COE_re467[1,]
+WHOLE_COE_re467 <- WHOLE_COE_re467[-1,]
+WHOLE_COE_re467 <- WHOLE_COE_re467[order(WHOLE_COE_re467$YEAR
+                                         , decreasing= T),]
+WHOLE_COE_re467 <- data.table(ts(WHOLE_COE_re467, start = c(2008), end = c(2016), frequency = 1))
+WHOLE_COE_re467 <- na.ma(WHOLE_COE_re467, k = 1, weighting = "simple")
+WHOLE_COE_re467$YEAR <- as.integer(2008:2016)
+WHOLE_COE_re467 <- rbind(WHOLE_COE_re467,WHOLE_COE_re467_NACE)
+
+WHOLE_COE_re467 <- melt(WHOLE_COE_re467,variable.name = "Names", value.name = "COE")
+WHOLE_COE_re467 <- WHOLE_COE_re467 %>% spread(YEAR, COE, fill = NA, convert = T)
+
+WHOLE_COE_re <- rbind(WHOLE_COE_re45,WHOLE_COE_re467)
+
+WHOLE_COE_NOre <- data.frame( Names = WHOLE_COE_NOre$`Company name`,
+                              "2008"= WHOLE_COE_NOre$COE08,
+                              "2009"= WHOLE_COE_NOre$COE09,
+                              "2010"= WHOLE_COE_NOre$COE10,
+                              "2011"= WHOLE_COE_NOre$COE11,
+                              "2012"= WHOLE_COE_NOre$COE12,
+                              "2013"= WHOLE_COE_NOre$COE13,
+                              "2014"= WHOLE_COE_NOre$COE14,
+                              "2015"= WHOLE_COE_NOre$COE15,
+                              "2016"= WHOLE_COE_NOre$COE16,
+                              NACE = WHOLE_COE_NOre$`NACE code`)
+setnames(WHOLE_COE_NOre, c(1:11), c("Names","2008","2009","2010","2011","2012","2013","2014","2015","2016","NACE"))
+WHOLE_COE <- rbind(WHOLE_COE_NOre,WHOLE_COE_re,fill=T)
+WHOLE_COE$Names <- as.character(WHOLE_COE$Names)
+remove(WHOLE_COE_NOre,WHOLE_COE_re,WHOLE_COE_re467_NACE,WHOLE_COE_re45_NACE,
+       WHOLE_COE_re467,WHOLE_COE_re45)
+
+WHOLE_sales[WHOLE_sales ==0 ] <- NA
+WHOLE_VA[WHOLE_VA ==0 ] <- NA
+WHOLE_COE[WHOLE_COE ==0 ] <- NA
+
+#####
+
+##After imputation
+WHOLE_HHI_Total <- melt(WHOLE_sales[, lapply(.SD, hhi),.SDcols=c(2:10)],
+                    variable.name = "YEAR", value.name = "WHOLE_HHI")
+
+WHOLE_HHI_SUB <- melt(WHOLE_sales[, lapply(.SD, hhi),by=NACE,.SDcols=c(2:10)],
+                  id="NACE",variable.name = "YEAR", value.name = "WHOLE_HHI_SUB")
+
+#Total sum of sales each YEAR, Manufacturing.
+WHOLE_sales_total <- WHOLE_sales[,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20 / 4 firms
+WHOLE_sales_top<- WHOLE_sales[, lapply(.SD, TOP_N2), .SDcols=c(2:10)] %>% mutate(Type= as.factor(1:2)) %>% data.table() %>%
+  melt(variable.name = "YEAR", value.name = "Sales")
+
+##VA
+#Total sum of sales each YEAR, Manufacturing.
+WHOLE_VA_total <- WHOLE_VA[,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)]%>%
+  melt(variable.name = "YEAR", value.name = "VA_total")
+
+
+##COE
+#subset of Cose of employees
+WHOLE_COE_total <- WHOLE_COE[,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "COE_total")
+
+
+#This is ready to use dataset for Finance industry
+Wholesales <- data.table(YEAR = as.numeric(2008:2016),
+                            Sales_Total= as.numeric(WHOLE_sales_total$Sales_total),
+                            Sales20= subset(WHOLE_sales_top$Sales,WHOLE_sales_top$Type == 1),
+                            Sales4 = subset(WHOLE_sales_top$Sales,WHOLE_sales_top$Type == 2),
+                            CR20_Sales= subset(WHOLE_sales_top$Sales,WHOLE_sales_top$Type == 1) / WHOLE_sales_total$Sales_total,
+                            CR4_Sales = subset(WHOLE_sales_top$Sales,WHOLE_sales_top$Type == 2) / WHOLE_sales_total$Sales_total,
+                            VA = as.numeric(WHOLE_VA_total$VA_total),
+                            COE= as.numeric(WHOLE_COE_total$COE_total),
+                            LS =as.numeric(WHOLE_COE_total$COE_total / WHOLE_VA_total$VA_total),
+                            WHOLE_HHI=WHOLE_HHI_Total$WHOLE_HHI,
+                            stringsAsFactors = F)
+
+
+#drop unnecessary variables
+remove(WHOLE_sales_total, WHOLE_sales_top, WHOLE_COE_total, WHOLE_VA_total)
+
+
+
+
+#Sub-sector analysis
+
+#Division 45 : Wholesale and retail trade and repair of motor vehicles and motorcycles
+#WHOLE45 <- WHOLE[ which(`NACE code`>= 4500 & `NACE code`< 4600),]
+#Division 46 : Wholesale trade, except of motor vehicles and motorcycles
+#WHOLE46 <- WHOLE[ which(`NACE code`>= 4600 & `NACE code`< 4700),]
+#Division 47 : Retail trade, except of motor vehicles and motorcycles
+#WHOLE47 <- WHOLE[ which(`NACE code`>= 4700 & `NACE code`< 4800),]
+
+#Division 45 : Wholesale and retail trade and repair of motor vehicles and motorcycles
+WHOLE45_VA <- WHOLE_VA[ which(NACE == 45),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+WHOLE45_COE <- WHOLE_COE[ which(NACE == 45),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "WHOLE45_COE")
+
+
+#Sales
+WHOLE45_sales <- WHOLE_sales[ which(NACE == 45),-c(1,11)]
+WHOLE45_sales_total<- WHOLE45_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+WHOLE45_sales_top<- WHOLE45_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+WHOLE45 <- data.table(YEAR = as.integer(2008:2016),
+                  WHOLE45_CR4    = subset(WHOLE45_sales_top$Sales, WHOLE45_sales_top$Type == 2) / WHOLE45_sales_total$Sales_total,
+                  WHOLE45_CR20   = subset(WHOLE45_sales_top$Sales, WHOLE45_sales_top$Type == 1) / WHOLE45_sales_total$Sales_total,
+                  WHOLE45_LS     = WHOLE45_COE$WHOLE45_COE / WHOLE45_VA$VA_total,
+                  WHOLE45_HHI    = subset(WHOLE_HHI_SUB$WHOLE_HHI_SUB, WHOLE_HHI_SUB$NACE == 45),
+                  WHOLE45_top4_sales = subset(WHOLE45_sales_top$Sales, WHOLE45_sales_top$Type == 2),
+                  WHOLE45_top20_sales = subset(WHOLE45_sales_top$Sales, WHOLE45_sales_top$Type == 1),
+                  cbind(WHOLE45_sales_total[,2],WHOLE45_VA[,2],WHOLE45_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(WHOLE45_COE, WHOLE45_sales, WHOLE45_sales_top, WHOLE45_sales_total, WHOLE45_VA)
+
+#Division 46 : Wholesale trade, except of motor vehicles and motorcycles
+WHOLE46_VA <- WHOLE_VA[ which(NACE == 46),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+WHOLE46_COE <- WHOLE_COE[ which(NACE == 46),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "WHOLE46_COE")
+
+
+#Sales
+WHOLE46_sales <- WHOLE_sales[ which(NACE == 46),-c(1,11)]
+WHOLE46_sales_total<- WHOLE46_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+WHOLE46_sales_top<- WHOLE46_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+WHOLE46 <- data.table(YEAR = as.integer(2008:2016),
+                  WHOLE46_CR4    = subset(WHOLE46_sales_top$Sales, WHOLE46_sales_top$Type == 2) / WHOLE46_sales_total$Sales_total,
+                  WHOLE46_CR20   = subset(WHOLE46_sales_top$Sales, WHOLE46_sales_top$Type == 1) / WHOLE46_sales_total$Sales_total,
+                  WHOLE46_LS     = WHOLE46_COE$WHOLE46_COE / WHOLE46_VA$VA_total,
+                  WHOLE46_HHI    = subset(WHOLE_HHI_SUB$WHOLE_HHI_SUB, WHOLE_HHI_SUB$NACE == 46),
+                  WHOLE46_top4_sales = subset(WHOLE46_sales_top$Sales, WHOLE46_sales_top$Type == 2),
+                  WHOLE46_top20_sales = subset(WHOLE46_sales_top$Sales, WHOLE46_sales_top$Type == 1),
+                  cbind(WHOLE46_sales_total[,2],WHOLE46_VA[,2],WHOLE46_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(WHOLE46_COE, WHOLE46_sales, WHOLE46_sales_top, WHOLE46_sales_total, WHOLE46_VA)
+
+
+
+#Division 47 : Retail trade, except of motor vehicles and motorcycles
+WHOLE47_VA <- WHOLE_VA[ which(NACE == 47),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+WHOLE47_COE <- WHOLE_COE[ which(NACE == 47),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "WHOLE47_COE")
+
+
+#Sales
+WHOLE47_sales <- WHOLE_sales[ which(NACE == 47),-c(1,11)]
+WHOLE47_sales_total<- WHOLE47_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+WHOLE47_sales_top<- WHOLE47_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+WHOLE47 <- data.table(YEAR = as.integer(2008:2016),
+                  WHOLE47_CR4    = subset(WHOLE47_sales_top$Sales, WHOLE47_sales_top$Type == 2) / WHOLE47_sales_total$Sales_total,
+                  WHOLE47_CR20   = subset(WHOLE47_sales_top$Sales, WHOLE47_sales_top$Type == 1) / WHOLE47_sales_total$Sales_total,
+                  WHOLE47_LS     = WHOLE47_COE$WHOLE47_COE / WHOLE47_VA$VA_total,
+                  WHOLE47_HHI    = subset(WHOLE_HHI_SUB$WHOLE_HHI_SUB, WHOLE_HHI_SUB$NACE == 47),
+                  WHOLE47_top4_sales = subset(WHOLE47_sales_top$Sales, WHOLE47_sales_top$Type == 2),
+                  WHOLE47_top20_sales = subset(WHOLE47_sales_top$Sales, WHOLE47_sales_top$Type == 1),
+                  cbind(WHOLE47_sales_total[,2],WHOLE47_VA[,2],WHOLE47_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(WHOLE47_COE, WHOLE47_sales, WHOLE47_sales_top, WHOLE47_sales_total, WHOLE47_VA)
+```
+
+#MN
+```{r}
+M_N <- as.data.table(read_excel("/Users/TKim/Documents/R/DATA/MN.xls",
+                            sheet = "Results",
+                            na = "NA"))[,-c(1,4,5,15,25,35:44)]
+M_N[,c(2:29)] <- lapply(M_N[,c(2:29)], as.numeric)
+M_N$`NACE code`<- as.integer(M_N$`NACE code` / 100)
+M_N[M_N<0] <- NA
+
+
+M_N_sales <- dplyr::select(M_N, c(1:11)) %>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08,
+            AVG = mean(c(Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08), na.rm=TRUE),
+            NAs = sum(is.na(c(Sales16,Sales15,Sales14,Sales13,Sales12,Sales11,Sales10,Sales09,Sales08))))
+
+M_N_VA <- dplyr::select(M_N, c(1:2,12:20)) %>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08,
+            AVG = mean(c(VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08), na.rm=TRUE),
+            NAs = sum(is.na(c(VA16,VA15,VA14,VA13,VA12,VA11,VA10,VA09,VA08))))
+
+M_N_COE <- dplyr::select(M_N, c(1,2,21:29))%>% rowwise() %>%    
+  transmute(`Company name`,`NACE code`, COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08,
+            AVG = mean(c(COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08), na.rm=TRUE),
+            NAs = sum(is.na(c(COE16,COE15,COE14,COE13,COE12,COE11,COE10,COE09,COE08))))
+
+
+M_N_sales_re   <- as.data.table(subset(M_N_sales,  `NAs` <= 2 & `NAs`> 0))[,-c(12,13)] %>%
+  setnames(c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008")) %>%
+  melt(variable.name = "YEAR", value.name = "Sales")
+
+M_N_sales_re <- M_N_sales_re[order(M_N_sales_re$YEAR, decreasing= T),][order(M_N_sales_re$Names, decreasing= F),] %>%
+  spread(Names, Sales, fill = NA, convert = T)
+
+M_N_NACE <- M_N_sales_re[1,]
+
+M_N_sales_re <- M_N_sales_re[order(M_N_sales_re$YEAR, decreasing= T),][-10,]
+
+M_N_sales_re <- data.table(ts(M_N_sales_re, start = c(2008), end = c(2016), frequency = 1)) %>%
+  na.ma(k = 1, weighting = "simple")
+M_N_sales_re$YEAR <- as.integer(2008:2016)
+M_N_sales_re <- rbind(M_N_sales_re,M_N_NACE) %>%
+  melt(variable.name = "Names", value.name = "Sales") %>%
+  spread(YEAR, Sales, fill = NA, convert = T)
+
+M_N_sales_NOre <- as.data.table(subset(M_N_sales,  `NAs` >= 3 | `NAs` == 0 ))
+M_N_sales_NOre <- data.table(Names = M_N_sales_NOre$`Company name`,
+                           "2008"= M_N_sales_NOre$Sales08,
+                           "2009"= M_N_sales_NOre$Sales09,
+                           "2010"= M_N_sales_NOre$Sales10,
+                           "2011"= M_N_sales_NOre$Sales11,
+                           "2012"= M_N_sales_NOre$Sales12,
+                           "2013"= M_N_sales_NOre$Sales13,
+                           "2014"= M_N_sales_NOre$Sales14,
+                           "2015"= M_N_sales_NOre$Sales15,
+                           "2016"= M_N_sales_NOre$Sales16,
+                           NACE = M_N_sales_NOre$`NACE code`)
+M_N_sales <- rbind(M_N_sales_NOre,M_N_sales_re, fill=T)
+M_N_sales$Names <- as.character(M_N_sales$Names)
+remove(M_N_sales_NOre,M_N_sales_re)
+
+#VA
+
+M_N_VA_re   <- as.data.table(subset(M_N_VA,  `NAs` <= 2 & `NAs`> 0))[,-c(12,13)] %>%
+  setnames(c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008")) %>%
+  melt(variable.name = "YEAR", value.name = "VA")
+
+M_N_VA_re <- M_N_VA_re[order(M_N_VA_re$YEAR, decreasing= T),][order(M_N_VA_re$Names, decreasing= F),] %>%
+  spread(Names, VA, fill = NA, convert = T)
+
+M_N_NACE <- M_N_VA_re[1,]
+
+M_N_VA_re <- M_N_VA_re[order(M_N_VA_re$YEAR, decreasing= T),][-10,]
+
+M_N_VA_re <- data.table(ts(M_N_VA_re, start = c(2008), end = c(2016), frequency = 1)) %>%
+  na.ma(k = 1, weighting = "simple")
+M_N_VA_re$YEAR <- as.integer(2008:2016)
+M_N_VA_re <- rbind(M_N_VA_re,M_N_NACE) %>%
+  melt(variable.name = "Names", value.name = "VA") %>%
+  spread(YEAR, VA, fill = NA, convert = T)
+
+M_N_VA_NOre <- as.data.table(subset(M_N_VA,  `NAs` >= 3 | `NAs` == 0 ))
+M_N_VA_NOre <- data.table(Names = M_N_VA_NOre$`Company name`,
+                        "2008"= M_N_VA_NOre$VA08,
+                        "2009"= M_N_VA_NOre$VA09,
+                        "2010"= M_N_VA_NOre$VA10,
+                        "2011"= M_N_VA_NOre$VA11,
+                        "2012"= M_N_VA_NOre$VA12,
+                        "2013"= M_N_VA_NOre$VA13,
+                        "2014"= M_N_VA_NOre$VA14,
+                        "2015"= M_N_VA_NOre$VA15,
+                        "2016"= M_N_VA_NOre$VA16,
+                        NACE = M_N_VA_NOre$`NACE code`)
+M_N_VA <- rbind(M_N_VA_NOre,M_N_VA_re, fill=T)
+M_N_VA$Names <- as.character(M_N_VA$Names)
+remove(M_N_VA_NOre,M_N_VA_re)
+
+#COE
+
+M_N_COE_re   <- as.data.table(subset(M_N_COE,  `NAs` <= 2 & `NAs`> 0))[,-c(12,13)] %>%
+  setnames(c(1:11), c("Names","NACE","2016","2015","2014","2013","2012","2011","2010","2009","2008")) %>%
+  melt(variable.name = "YEAR", value.name = "COE")
+
+M_N_COE_re <- M_N_COE_re[order(M_N_COE_re$YEAR, decreasing= T),][order(M_N_COE_re$Names, decreasing= F),] %>%
+  spread(Names, COE, fill = NA, convert = T)
+
+M_N_NACE <- M_N_COE_re[1,]
+
+M_N_COE_re <- M_N_COE_re[order(M_N_COE_re$YEAR, decreasing= T),][-10,]
+
+M_N_COE_re <- data.table(ts(M_N_COE_re, start = c(2008), end = c(2016), frequency = 1)) %>%
+  na.ma(k = 1, weighting = "simple")
+M_N_COE_re$YEAR <- as.integer(2008:2016)
+M_N_COE_re <- rbind(M_N_COE_re,M_N_NACE) %>%
+  melt(variable.name = "Names", value.name = "COE") %>%
+  spread(YEAR, COE, fill = NA, convert = T)
+
+M_N_COE_NOre <- as.data.table(subset(M_N_COE,  `NAs` >= 3 | `NAs` == 0 ))
+M_N_COE_NOre <- data.table(Names = M_N_COE_NOre$`Company name`,
+                         "2008"= M_N_COE_NOre$COE08,
+                         "2009"= M_N_COE_NOre$COE09,
+                         "2010"= M_N_COE_NOre$COE10,
+                         "2011"= M_N_COE_NOre$COE11,
+                         "2012"= M_N_COE_NOre$COE12,
+                         "2013"= M_N_COE_NOre$COE13,
+                         "2014"= M_N_COE_NOre$COE14,
+                         "2015"= M_N_COE_NOre$COE15,
+                         "2016"= M_N_COE_NOre$COE16,
+                         NACE = M_N_COE_NOre$`NACE code`)
+M_N_COE <- rbind(M_N_COE_NOre,M_N_COE_re, fill=T)
+M_N_COE$Names <- as.character(M_N_COE$Names)
+remove(M_N_COE_NOre,M_N_COE_re,M_N_NACE)
+
+
+##### HHI INDEX #####
+M_N_HHI_Total <- melt(M_N_sales[, lapply(.SD, hhi),.SDcols=c(2:10)],
+                    variable.name = "YEAR", value.name = "M_N_HHI")
+
+M_N_HHI_SUB <- melt(M_N_sales[, lapply(.SD, hhi),by=NACE,.SDcols=c(2:10)],
+                  id="NACE",variable.name = "YEAR", value.name = "M_N_HHI_SUB")
+
+#Total sum of sales each YEAR, Manufacturing.
+M_N_sales_total <- M_N_sales[,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20 / 4 firms
+M_N_sales_top<- M_N_sales[, lapply(.SD, TOP_N2), .SDcols=c(2:10)] %>% mutate(Type= as.factor(1:2)) %>% data.table() %>%
+  melt(variable.name = "YEAR", value.name = "Sales")
+
+##VA
+#Total sum of sales each YEAR, Manufacturing.
+M_N_VA_total <- M_N_VA[,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)]%>%
+  melt(variable.name = "YEAR", value.name = "VA_total")
+
+
+##COE
+#subset of Cose of employees
+M_N_COE_total <- M_N_COE[,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "COE_total")
+
+
+#This is ready to use dataset for Finance industry
+MN <- data.table(YEAR = as.numeric(2008:2016),
+                            Sales_Total= as.numeric(M_N_sales_total$Sales_total),
+                            Sales20= subset(M_N_sales_top$Sales,M_N_sales_top$Type == 1),
+                            Sales4 = subset(M_N_sales_top$Sales,M_N_sales_top$Type == 2),
+                            CR20_Sales= subset(M_N_sales_top$Sales,M_N_sales_top$Type == 1) / M_N_sales_total$Sales_total,
+                            CR4_Sales = subset(M_N_sales_top$Sales,M_N_sales_top$Type == 2) / M_N_sales_total$Sales_total,
+                            VA = as.numeric(M_N_VA_total$VA_total),
+                            COE= as.numeric(M_N_COE_total$COE_total),
+                            LS =as.numeric(M_N_COE_total$COE_total / M_N_VA_total$VA_total),
+                            M_N_HHI=M_N_HHI_Total$M_N_HHI,
+                            stringsAsFactors = F)
+
+
+#drop unnecessary variables
+remove(M_N_sales_total, M_N_sales_top, M_N_COE_total, M_N_VA_total)
+
+#Sub-sector analysis
+#####
+#SECTION M — PROFESSIONAL, SCIENTIFIC AND TECHNICAL ACTIVITIES
+#Division 69 : Legal and accounting activities
+#M_N69 <- M_N[ which(`NACE code`>= 6900 & `NACE code`< 7000),]
+#Division 70 : Activities of head o ces; management consultancy activities
+#M_N70 <- M_N[ which(`NACE code`>= 7000 & `NACE code`< 7100),]
+#Division 71 : Architectural and engineering activities; technical testing and analysis
+#M_N71 <- M_N[ which(`NACE code`>= 7100 & `NACE code`< 7200),]
+#Division 72 : Scienti c research and development
+#M_N72 <- M_N[ which(`NACE code`>= 7200 & `NACE code`< 7300),]
+#Division 73 : Advertising and market research
+#M_N73 <- M_N[ which(`NACE code`>= 7300 & `NACE code`< 7400),]
+#Division 74 : Other professional, scienti c and technical activities
+#M_N74 <- M_N[ which(`NACE code`>= 7400 & `NACE code`< 7500),]
+#Division 75 : Veterinary activities
+#M_N75 <- M_N[ which(`NACE code`>= 7500 & `NACE code`< 7600),]
+
+#Section N — ADMINISTRATIVE AND SUPPORT SERVICE ACTIVITIES
+#Division 77 : Rental and leasing activities
+#M_N77 <- M_N[ which(`NACE code`>= 7700 & `NACE code`< 7800),]
+#Division 78 : Employment activities
+#M_N78 <- M_N[ which(`NACE code`>= 7800 & `NACE code`< 7900),]
+#Division 79 : Travel agency, tour operator reservation service and related activities
+#M_N79 <- M_N[ which(`NACE code`>= 7900 & `NACE code`< 8000),]
+#Division 80 : Security and investigation activities
+#M_N80 <- M_N[ which(`NACE code`>= 8000 & `NACE code`< 8100),]
+#Division 81 : Services to buildings and landscape activities
+#M_N81 <- M_N[ which(`NACE code`>= 8100 & `NACE code`< 8200),]
+#Division 82 : Office administrative, o ce support and other business support activities
+#M_N82 <- M_N[ which(`NACE code`>= 8200 & `NACE code`< 8300),]
+#####
+#Division 69
+M_N69_VA <- M_N_VA[ which(NACE == 69),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M_N69_COE <- M_N_COE[ which(NACE == 69),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M_N69_COE")
+
+
+#Sales
+M_N69_sales <- M_N_sales[ which(NACE == 69),-c(1,11)]
+M_N69_sales_total<- M_N69_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M_N69_sales_top<- M_N69_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M_N69 <- data.table(YEAR = as.integer(2008:2016),
+                  M_N69_CR4    = subset(M_N69_sales_top$Sales, M_N69_sales_top$Type == 2) / M_N69_sales_total$Sales_total,
+                  M_N69_CR20   = subset(M_N69_sales_top$Sales, M_N69_sales_top$Type == 1) / M_N69_sales_total$Sales_total,
+                  M_N69_LS     = M_N69_COE$M_N69_COE / M_N69_VA$VA_total,
+                  M_N69_HHI    = subset(M_N_HHI_SUB$M_N_HHI_SUB, M_N_HHI_SUB$NACE == 69),
+                  M_N69_top4_sales = subset(M_N69_sales_top$Sales, M_N69_sales_top$Type == 2),
+                  M_N69_top20_sales = subset(M_N69_sales_top$Sales, M_N69_sales_top$Type == 1),
+                  cbind(M_N69_sales_total[,2],M_N69_VA[,2],M_N69_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M_N69_COE, M_N69_sales, M_N69_sales_top, M_N69_sales_total, M_N69_VA)
+
+
+#Division 70
+M_N70_VA <- M_N_VA[ which(NACE == 70),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M_N70_COE <- M_N_COE[ which(NACE == 70),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M_N70_COE")
+
+
+#Sales
+M_N70_sales <- M_N_sales[ which(NACE == 70),-c(1,11)]
+M_N70_sales_total<- M_N70_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M_N70_sales_top<- M_N70_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M_N70 <- data.table(YEAR = as.integer(2008:2016),
+                  M_N70_CR4    = subset(M_N70_sales_top$Sales, M_N70_sales_top$Type == 2) / M_N70_sales_total$Sales_total,
+                  M_N70_CR20   = subset(M_N70_sales_top$Sales, M_N70_sales_top$Type == 1) / M_N70_sales_total$Sales_total,
+                  M_N70_LS     = M_N70_COE$M_N70_COE / M_N70_VA$VA_total,
+                  M_N70_HHI    = subset(M_N_HHI_SUB$M_N_HHI_SUB, M_N_HHI_SUB$NACE == 70),
+                  M_N70_top4_sales = subset(M_N70_sales_top$Sales, M_N70_sales_top$Type == 2),
+                  M_N70_top20_sales = subset(M_N70_sales_top$Sales, M_N70_sales_top$Type == 1),
+                  cbind(M_N70_sales_total[,2],M_N70_VA[,2],M_N70_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M_N70_COE, M_N70_sales, M_N70_sales_top, M_N70_sales_total, M_N70_VA)
+
+#Division 71
+M_N71_VA <- M_N_VA[ which(NACE == 71),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M_N71_COE <- M_N_COE[ which(NACE == 71),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M_N71_COE")
+
+
+#Sales
+M_N71_sales <- M_N_sales[ which(NACE == 71),-c(1,11)]
+M_N71_sales_total<- M_N71_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M_N71_sales_top<- M_N71_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M_N71 <- data.table(YEAR = as.integer(2008:2016),
+                  M_N71_CR4    = subset(M_N71_sales_top$Sales, M_N71_sales_top$Type == 2) / M_N71_sales_total$Sales_total,
+                  M_N71_CR20   = subset(M_N71_sales_top$Sales, M_N71_sales_top$Type == 1) / M_N71_sales_total$Sales_total,
+                  M_N71_LS     = M_N71_COE$M_N71_COE / M_N71_VA$VA_total,
+                  M_N71_HHI    = subset(M_N_HHI_SUB$M_N_HHI_SUB, M_N_HHI_SUB$NACE == 71),
+                  M_N71_top4_sales = subset(M_N71_sales_top$Sales, M_N71_sales_top$Type == 2),
+                  M_N71_top20_sales = subset(M_N71_sales_top$Sales, M_N71_sales_top$Type == 1),
+                  cbind(M_N71_sales_total[,2],M_N71_VA[,2],M_N71_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M_N71_COE, M_N71_sales, M_N71_sales_top, M_N71_sales_total, M_N71_VA)
+
+#Division 72
+M_N72_VA <- M_N_VA[ which(NACE == 72),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M_N72_COE <- M_N_COE[ which(NACE == 72),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M_N72_COE")
+
+
+#Sales
+M_N72_sales <- M_N_sales[ which(NACE == 72),-c(1,11)]
+M_N72_sales_total<- M_N72_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M_N72_sales_top<- M_N72_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M_N72 <- data.table(YEAR = as.integer(2008:2016),
+                  M_N72_CR4    = subset(M_N72_sales_top$Sales, M_N72_sales_top$Type == 2) / M_N72_sales_total$Sales_total,
+                  M_N72_CR20   = subset(M_N72_sales_top$Sales, M_N72_sales_top$Type == 1) / M_N72_sales_total$Sales_total,
+                  M_N72_LS     = M_N72_COE$M_N72_COE / M_N72_VA$VA_total,
+                  M_N72_HHI    = subset(M_N_HHI_SUB$M_N_HHI_SUB, M_N_HHI_SUB$NACE == 72),
+                  M_N72_top4_sales = subset(M_N72_sales_top$Sales, M_N72_sales_top$Type == 2),
+                  M_N72_top20_sales = subset(M_N72_sales_top$Sales, M_N72_sales_top$Type == 1),
+                  cbind(M_N72_sales_total[,2],M_N72_VA[,2],M_N72_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M_N72_COE, M_N72_sales, M_N72_sales_top, M_N72_sales_total, M_N72_VA)
+
+
+#Division 73
+M_N73_VA <- M_N_VA[ which(NACE == 73),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M_N73_COE <- M_N_COE[ which(NACE == 73),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M_N73_COE")
+
+
+#Sales
+M_N73_sales <- M_N_sales[ which(NACE == 73),-c(1,11)]
+M_N73_sales_total<- M_N73_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M_N73_sales_top<- M_N73_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M_N73 <- data.table(YEAR = as.integer(2008:2016),
+                  M_N73_CR4    = subset(M_N73_sales_top$Sales, M_N73_sales_top$Type == 2) / M_N73_sales_total$Sales_total,
+                  M_N73_CR20   = subset(M_N73_sales_top$Sales, M_N73_sales_top$Type == 1) / M_N73_sales_total$Sales_total,
+                  M_N73_LS     = M_N73_COE$M_N73_COE / M_N73_VA$VA_total,
+                  M_N73_HHI    = subset(M_N_HHI_SUB$M_N_HHI_SUB, M_N_HHI_SUB$NACE == 73),
+                  M_N73_top4_sales = subset(M_N73_sales_top$Sales, M_N73_sales_top$Type == 2),
+                  M_N73_top20_sales = subset(M_N73_sales_top$Sales, M_N73_sales_top$Type == 1),
+                  cbind(M_N73_sales_total[,2],M_N73_VA[,2],M_N73_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M_N73_COE, M_N73_sales, M_N73_sales_top, M_N73_sales_total, M_N73_VA)
+
+
+#Division 74
+M_N74_VA <- M_N_VA[ which(NACE == 74),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M_N74_COE <- M_N_COE[ which(NACE == 74),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M_N74_COE")
+
+
+#Sales
+M_N74_sales <- M_N_sales[ which(NACE == 74),-c(1,11)]
+M_N74_sales_total<- M_N74_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M_N74_sales_top<- M_N74_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M_N74 <- data.table(YEAR = as.integer(2008:2016),
+                  M_N74_CR4    = subset(M_N74_sales_top$Sales, M_N74_sales_top$Type == 2) / M_N74_sales_total$Sales_total,
+                  M_N74_CR20   = subset(M_N74_sales_top$Sales, M_N74_sales_top$Type == 1) / M_N74_sales_total$Sales_total,
+                  M_N74_LS     = M_N74_COE$M_N74_COE / M_N74_VA$VA_total,
+                  M_N74_HHI    = subset(M_N_HHI_SUB$M_N_HHI_SUB, M_N_HHI_SUB$NACE == 74),
+                  M_N74_top4_sales = subset(M_N74_sales_top$Sales, M_N74_sales_top$Type == 2),
+                  M_N74_top20_sales = subset(M_N74_sales_top$Sales, M_N74_sales_top$Type == 1),
+                  cbind(M_N74_sales_total[,2],M_N74_VA[,2],M_N74_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M_N74_COE, M_N74_sales, M_N74_sales_top, M_N74_sales_total, M_N74_VA)
+
+
+#Division 75
+M_N75_VA <- M_N_VA[ which(NACE == 75),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M_N75_COE <- M_N_COE[ which(NACE == 75),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M_N75_COE")
+
+
+#Sales
+M_N75_sales <- M_N_sales[ which(NACE == 75),-c(1,11)]
+M_N75_sales_total<- M_N75_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M_N75_sales_top<- M_N75_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M_N75 <- data.table(YEAR = as.integer(2008:2016),
+                  M_N75_CR4    = subset(M_N75_sales_top$Sales, M_N75_sales_top$Type == 2) / M_N75_sales_total$Sales_total,
+                  M_N75_CR20   = subset(M_N75_sales_top$Sales, M_N75_sales_top$Type == 1) / M_N75_sales_total$Sales_total,
+                  M_N75_LS     = M_N75_COE$M_N75_COE / M_N75_VA$VA_total,
+                  M_N75_HHI    = subset(M_N_HHI_SUB$M_N_HHI_SUB, M_N_HHI_SUB$NACE == 75),
+                  M_N75_top4_sales = subset(M_N75_sales_top$Sales, M_N75_sales_top$Type == 2),
+                  M_N75_top20_sales = subset(M_N75_sales_top$Sales, M_N75_sales_top$Type == 1),
+                  cbind(M_N75_sales_total[,2],M_N75_VA[,2],M_N75_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M_N75_COE, M_N75_sales, M_N75_sales_top, M_N75_sales_total, M_N75_VA)
+
+
+
+#Division 77
+M_N77_VA <- M_N_VA[ which(NACE == 77),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M_N77_COE <- M_N_COE[ which(NACE == 77),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M_N77_COE")
+
+
+#Sales
+M_N77_sales <- M_N_sales[ which(NACE == 77),-c(1,11)]
+M_N77_sales_total<- M_N77_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M_N77_sales_top<- M_N77_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M_N77 <- data.table(YEAR = as.integer(2008:2016),
+                  M_N77_CR4    = subset(M_N77_sales_top$Sales, M_N77_sales_top$Type == 2) / M_N77_sales_total$Sales_total,
+                  M_N77_CR20   = subset(M_N77_sales_top$Sales, M_N77_sales_top$Type == 1) / M_N77_sales_total$Sales_total,
+                  M_N77_LS     = M_N77_COE$M_N77_COE / M_N77_VA$VA_total,
+                  M_N77_HHI    = subset(M_N_HHI_SUB$M_N_HHI_SUB, M_N_HHI_SUB$NACE == 77),
+                  M_N77_top4_sales = subset(M_N77_sales_top$Sales, M_N77_sales_top$Type == 2),
+                  M_N77_top20_sales = subset(M_N77_sales_top$Sales, M_N77_sales_top$Type == 1),
+                  cbind(M_N77_sales_total[,2],M_N77_VA[,2],M_N77_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M_N77_COE, M_N77_sales, M_N77_sales_top, M_N77_sales_total, M_N77_VA)
+
+#Division 78
+M_N78_VA <- M_N_VA[ which(NACE == 78),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M_N78_COE <- M_N_COE[ which(NACE == 78),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M_N78_COE")
+
+
+#Sales
+M_N78_sales <- M_N_sales[ which(NACE == 78),-c(1,11)]
+M_N78_sales_total<- M_N78_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M_N78_sales_top<- M_N78_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M_N78 <- data.table(YEAR = as.integer(2008:2016),
+                  M_N78_CR4    = subset(M_N78_sales_top$Sales, M_N78_sales_top$Type == 2) / M_N78_sales_total$Sales_total,
+                  M_N78_CR20   = subset(M_N78_sales_top$Sales, M_N78_sales_top$Type == 1) / M_N78_sales_total$Sales_total,
+                  M_N78_LS     = M_N78_COE$M_N78_COE / M_N78_VA$VA_total,
+                  M_N78_HHI    = subset(M_N_HHI_SUB$M_N_HHI_SUB, M_N_HHI_SUB$NACE == 78),
+                  M_N78_top4_sales = subset(M_N78_sales_top$Sales, M_N78_sales_top$Type == 2),
+                  M_N78_top20_sales = subset(M_N78_sales_top$Sales, M_N78_sales_top$Type == 1),
+                  cbind(M_N78_sales_total[,2],M_N78_VA[,2],M_N78_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M_N78_COE, M_N78_sales, M_N78_sales_top, M_N78_sales_total, M_N78_VA)
+
+
+#Division 79
+M_N79_VA <- M_N_VA[ which(NACE == 79),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M_N79_COE <- M_N_COE[ which(NACE == 79),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M_N79_COE")
+
+
+#Sales
+M_N79_sales <- M_N_sales[ which(NACE == 79),-c(1,11)]
+M_N79_sales_total<- M_N79_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M_N79_sales_top<- M_N79_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M_N79 <- data.table(YEAR = as.integer(2008:2016),
+                  M_N79_CR4    = subset(M_N79_sales_top$Sales, M_N79_sales_top$Type == 2) / M_N79_sales_total$Sales_total,
+                  M_N79_CR20   = subset(M_N79_sales_top$Sales, M_N79_sales_top$Type == 1) / M_N79_sales_total$Sales_total,
+                  M_N79_LS     = M_N79_COE$M_N79_COE / M_N79_VA$VA_total,
+                  M_N79_HHI    = subset(M_N_HHI_SUB$M_N_HHI_SUB, M_N_HHI_SUB$NACE == 79),
+                  M_N79_top4_sales = subset(M_N79_sales_top$Sales, M_N79_sales_top$Type == 2),
+                  M_N79_top20_sales = subset(M_N79_sales_top$Sales, M_N79_sales_top$Type == 1),
+                  cbind(M_N79_sales_total[,2],M_N79_VA[,2],M_N79_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M_N79_COE, M_N79_sales, M_N79_sales_top, M_N79_sales_total, M_N79_VA)
+
+#Division 80
+M_N80_VA <- M_N_VA[ which(NACE == 80),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M_N80_COE <- M_N_COE[ which(NACE == 80),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M_N80_COE")
+
+
+#Sales
+M_N80_sales <- M_N_sales[ which(NACE == 80),-c(1,11)]
+M_N80_sales_total<- M_N80_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M_N80_sales_top<- M_N80_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M_N80 <- data.table(YEAR = as.integer(2008:2016),
+                  M_N80_CR4    = subset(M_N80_sales_top$Sales, M_N80_sales_top$Type == 2) / M_N80_sales_total$Sales_total,
+                  M_N80_CR20   = subset(M_N80_sales_top$Sales, M_N80_sales_top$Type == 1) / M_N80_sales_total$Sales_total,
+                  M_N80_LS     = M_N80_COE$M_N80_COE / M_N80_VA$VA_total,
+                  M_N80_HHI    = subset(M_N_HHI_SUB$M_N_HHI_SUB, M_N_HHI_SUB$NACE == 80),
+                  M_N80_top4_sales = subset(M_N80_sales_top$Sales, M_N80_sales_top$Type == 2),
+                  M_N80_top20_sales = subset(M_N80_sales_top$Sales, M_N80_sales_top$Type == 1),
+                  cbind(M_N80_sales_total[,2],M_N80_VA[,2],M_N80_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M_N80_COE, M_N80_sales, M_N80_sales_top, M_N80_sales_total, M_N80_VA)
+
+#Division 81
+M_N81_VA <- M_N_VA[ which(NACE == 81),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M_N81_COE <- M_N_COE[ which(NACE == 81),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M_N81_COE")
+
+
+#Sales
+M_N81_sales <- M_N_sales[ which(NACE == 81),-c(1,11)]
+M_N81_sales_total<- M_N81_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M_N81_sales_top<- M_N81_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M_N81 <- data.table(YEAR = as.integer(2008:2016),
+                  M_N81_CR4    = subset(M_N81_sales_top$Sales, M_N81_sales_top$Type == 2) / M_N81_sales_total$Sales_total,
+                  M_N81_CR20   = subset(M_N81_sales_top$Sales, M_N81_sales_top$Type == 1) / M_N81_sales_total$Sales_total,
+                  M_N81_LS     = M_N81_COE$M_N81_COE / M_N81_VA$VA_total,
+                  M_N81_HHI    = subset(M_N_HHI_SUB$M_N_HHI_SUB, M_N_HHI_SUB$NACE == 81),
+                  M_N81_top4_sales = subset(M_N81_sales_top$Sales, M_N81_sales_top$Type == 2),
+                  M_N81_top20_sales = subset(M_N81_sales_top$Sales, M_N81_sales_top$Type == 1),
+                  cbind(M_N81_sales_total[,2],M_N81_VA[,2],M_N81_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M_N81_COE, M_N81_sales, M_N81_sales_top, M_N81_sales_total, M_N81_VA)
+
+
+#Division 82
+M_N82_VA <- M_N_VA[ which(NACE == 82),][,-c(1,11)][,lapply(.SD, sum, na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "VA_total")
+
+
+#subset of Cose of employees
+M_N82_COE <- M_N_COE[ which(NACE == 82),][,-c(1,11)][,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR",value.name = "M_N82_COE")
+
+
+#Sales
+M_N82_sales <- M_N_sales[ which(NACE == 82),-c(1,11)]
+M_N82_sales_total<- M_N82_sales[,lapply(.SD,sum,na.rm=TRUE)] %>%
+  melt(variable.name = "YEAR", value.name = "Sales_total")
+
+#Subsetting Sales which is the sum of the top 20(Type=1) / 4(Type=2) firms
+M_N82_sales_top<- M_N82_sales[, lapply(.SD, TOP_N2), .SDcols=c(1:9)] %>% mutate(Type= as.factor(1:2))%>% data.table %>%
+  melt.data.table(variable.name = "YEAR", value.name = "Sales")
+
+M_N82 <- data.table(YEAR = as.integer(2008:2016),
+                  M_N82_CR4    = subset(M_N82_sales_top$Sales, M_N82_sales_top$Type == 2) / M_N82_sales_total$Sales_total,
+                  M_N82_CR20   = subset(M_N82_sales_top$Sales, M_N82_sales_top$Type == 1) / M_N82_sales_total$Sales_total,
+                  M_N82_LS     = M_N82_COE$M_N82_COE / M_N82_VA$VA_total,
+                  M_N82_HHI    = subset(M_N_HHI_SUB$M_N_HHI_SUB, M_N_HHI_SUB$NACE == 82),
+                  M_N82_top4_sales = subset(M_N82_sales_top$Sales, M_N82_sales_top$Type == 2),
+                  M_N82_top20_sales = subset(M_N82_sales_top$Sales, M_N82_sales_top$Type == 1),
+                  cbind(M_N82_sales_total[,2],M_N82_VA[,2],M_N82_COE[,2]),
+                  stringsAsFactors = F)
+
+remove(M_N82_COE, M_N82_sales, M_N82_sales_top, M_N82_sales_total, M_N82_VA)
+
+
+
+#M_N69 <- M_N[ which(`NACE code`== 69),]
+#M_N70 <- M_N[ which(`NACE code`== 70),]
+#M_N71 <- M_N[ which(`NACE code`== 71),]
+#M_N72 <- M_N[ which(`NACE code`== 71),]
+#M_N73 <- M_N[ which(`NACE code`== 73),]
+#M_N74 <- M_N[ which(`NACE code`== 74),]
+#M_N75_2 <- M_N[ which(`NACE code`== 75),]
+#M_N76 <- M_N[ which(`NACE code`== 76),]
+#M_N77 <- M_N[ which(`NACE code`== 77),]
+#M_N78 <- M_N[ which(`NACE code`== 78),]
+#M_N79 <- M_N[ which(`NACE code`== 79),]
+#M_N80 <- M_N[ which(`NACE code`== 80),]
+#M_N81 <- M_N[ which(`NACE code`== 81),]
+#M_N82 <- M_N[ which(`NACE code`== 82),]
+```
+
+#visualisation
+```{r}
+# Manufacturing sub-code plot diagram.  ###DROP M12
+M_sub_LS <- (cbind(M10[,c(1,4)],M11[,4],M13[,4],M14[,4],
+                   M15[,4],M16[,4],M17[,4],M18[,4],
+                   M20[,4],M21[,4],M22[,4],M23[,4],M24[,4],
+                   M25[,4],M26[,4],M27[,4],M28[,4],M29[,4],
+                   M30[,4],M31[,4],M32[,4],M33[,4]))
+setnames(M_sub_LS, c(1:23), c("YEAR","M10","M11","M13","M14",
+                              "M15","M16","M17","M18",
+                              "M20","M21","M22","M23","M24",
+                              "M25","M26","M27","M28","M29",
+                              "M30","M31","M32","M33"))
+M_sub_LS <- melt(M_sub_LS , id="YEAR", variable.name = "SECTOR", value.name = "LS")
+
+M_sub_HHI <- melt((cbind(M10[,c(1,5)],M11[,5],M13[,5],M14[,5],
+                         M15[,5],M16[,5],M17[,5],M18[,5],
+                         M20[,5],M21[,5],M22[,5],M23[,5],M24[,5],
+                         M25[,5],M26[,5],M27[,5],M28[,5],M29[,5],
+                         M30[,5],M31[,5],M32[,5],M33[,5])),
+                  id="YEAR", variable.name = "SECTOR", value.name = "HHI")
+
+M_sub_CR4 <- melt((cbind(M10[,c(1,2)],M11[,2],M13[,2],M14[,2],
+                         M15[,2],M16[,2],M14[,2],M18[,2],
+                         M20[,2],M21[,2],M22[,2],M23[,2],M24[,2],
+                         M25[,2],M26[,2],M24[,2],M28[,2],M29[,2],
+                         M30[,2],M31[,2],M32[,2],M33[,2])),
+                  id="YEAR", variable.name = "SECTOR", value.name = "CR4")
+
+M_sub_CR20 <- melt((cbind(M10[,c(1,3)],M11[,3],M13[,3],M14[,3],
+                          M15[,3],M16[,3],M14[,3],M18[,3],
+                          M20[,3],M21[,3],M22[,3],M23[,3],M24[,3],
+                          M25[,3],M26[,3],M24[,3],M28[,3],M29[,3],
+                          M30[,3],M31[,3],M32[,3],M33[,3])),
+                   id="YEAR", variable.name = "SECTOR", value.name = "CR20")
+
+M_sub <- cbind(M_sub_LS, M_sub_CR4[,3], M_sub_CR20[,3], M_sub_HHI[,3])
+
+remove(M_sub_CR4,M_sub_LS,M_sub_HHI,M_sub_CR20)
+
+ggplot(M_sub,aes(x=CR4, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(M_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+ggplot(M_sub,aes(x=CR20, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(M_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+ggplot(M_sub,aes(x=HHI, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(M_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+
+# Construction sub-code plot diagram.
+CONS_sub_LS <- (cbind(CONS41[,c(1,4)],CONS42[,4],CONS43[,4]))
+setnames(CONS_sub_LS, c(1:4), c("YEAR","CONS41","CONS42","CONS43"))
+CONS_sub_LS <- melt(CONS_sub_LS , id="YEAR", variable.name = "SECTOR", value.name = "LS")
+
+
+CONS_sub_HHI <- melt((cbind(CONS41[,c(1,5)],CONS42[,5],CONS43[,5])),
+                     id="YEAR", variable.name = "SECTOR", value.name = "HHI")
+
+CONS_sub_CR4 <- melt((cbind(CONS41[,c(1,2)],CONS42[,2],CONS43[,2])),
+                     id="YEAR", variable.name = "SECTOR", value.name = "CR4")
+
+CONS_sub_CR20 <- melt((cbind(CONS41[,c(1,3)],CONS42[,3],CONS43[,3])),
+                      id="YEAR", variable.name = "SECTOR", value.name = "CR20")
+
+CONS_sub <- cbind(CONS_sub_LS, CONS_sub_CR4[,3],CONS_sub_CR20[,3], CONS_sub_HHI[,3])
+
+remove(CONS_sub_CR4,CONS_sub_LS, CONS_sub_HHI,CONS_sub_CR20)
+
+ggplot(CONS_sub,aes(x=CR4, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(CONS_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+ggplot(CONS_sub,aes(x=CR20, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(CONS_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+ggplot(CONS_sub,aes(x=HHI, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(CONS_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+
+# Finance sub-code plot diagram.
+FI_sub_LS <- (cbind(FI64[,c(1,4)],FI66[,4]))
+setnames(FI_sub_LS, c(1:3), c("YEAR","FI64","FI66"))
+FI_sub_LS <- melt(FI_sub_LS , id="YEAR", variable.name = "SECTOR", value.name = "LS")
+
+
+FI_sub_HHI <- melt((cbind(FI64[,c(1,5)],FI66[,5])),
+                   id="YEAR", variable.name = "SECTOR", value.name = "HHI")
+
+FI_sub_CR4 <- melt((cbind(FI64[,c(1,2)],FI66[,2])),
+                   id="YEAR", variable.name = "SECTOR", value.name = "CR4")
+
+FI_sub_CR20 <- melt((cbind(FI64[,c(1,3)],FI66[,3])),
+                    id="YEAR", variable.name = "SECTOR", value.name = "CR20")
+
+FI_sub <- cbind(FI_sub_LS, FI_sub_CR4[,3],FI_sub_CR20[,3], FI_sub_HHI[,3])
+
+remove(FI_sub_CR4,FI_sub_LS,FI_sub_HHI,FI_sub_CR20)
+
+ggplot(FI_sub,aes(x=CR4, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(FI_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+ggplot(FI_sub,aes(x=CR20, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(FI_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+ggplot(FI_sub,aes(x=HHI, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(FI_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+
+# INFORmation sub-code plot diagram.
+INFOR_sub_LS <- (cbind(INFOR58[,c(1,4)],INFOR59[,4],INFOR60[,4]
+                       ,INFOR61[,4],INFOR62[,4],INFOR63[,4]))
+setnames(INFOR_sub_LS, c(1:7), c("YEAR","INFOR58","INFOR59","INFOR60",
+                                 "INFOR61","INFOR62","INFOR63"))
+INFOR_sub_LS <- melt(INFOR_sub_LS , id="YEAR", variable.name = "SECTOR", value.name = "LS")
+
+INFOR_sub_HHI <- melt((cbind(INFOR58[,c(1,5)],INFOR59[,5],INFOR60[,5],
+                             INFOR61[,5],INFOR62[,5],INFOR63[,5])),
+                      id="YEAR", variable.name = "SECTOR", value.name = "HHI")
+
+INFOR_sub_CR4 <- melt((cbind(INFOR58[,c(1,2)],INFOR59[,2],INFOR60[,2],
+                             INFOR61[,2],INFOR62[,2],INFOR63[,2])),
+                      id="YEAR", variable.name = "SECTOR", value.name = "CR4")
+
+INFOR_sub_CR20 <- melt((cbind(INFOR58[,c(1,3)],INFOR59[,3],INFOR60[,3],
+                              INFOR61[,3],INFOR62[,3],INFOR63[,3])),
+                       id="YEAR", variable.name = "SECTOR", value.name = "CR20")
+
+INFOR_sub <- cbind(INFOR_sub_LS, INFOR_sub_CR4[,3],INFOR_sub_CR20[,3], INFOR_sub_HHI[,3])
+
+remove(INFOR_sub_CR4,INFOR_sub_LS,INFOR_sub_HHI,INFOR_sub_CR20)
+
+ggplot(INFOR_sub,aes(x=CR4, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(INFOR_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+ggplot(INFOR_sub,aes(x=CR20, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(INFOR_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+ggplot(INFOR_sub,aes(x=HHI, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(INFOR_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+multiplot(ggplot(INFOR_sub,aes(x=YEAR, y=CR4, group=SECTOR, color = SECTOR)) +
+            scale_shape_manual(values=1:nlevels(INFOR_sub$SECTOR)) +
+            geom_line(aes(linetype=SECTOR))+
+            scale_linetype_manual(values=c("twodash","solid", "dashed", "longdash", "dotted", "dotdash" ))+
+            theme(legend.position="none"),
+          ggplot(INFOR_sub,aes(x=YEAR, y=CR20, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+            scale_shape_manual(values=1:nlevels(INFOR_sub$SECTOR)) +
+            geom_line(aes(linetype=SECTOR))+
+            scale_linetype_manual(values=c("twodash","solid", "dashed", "longdash", "dotted", "dotdash" ))+
+            theme(legend.position="none"),
+          ggplot(INFOR_sub,aes(x=YEAR, y=HHI, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+            scale_shape_manual(values=1:nlevels(INFOR_sub$SECTOR)) +
+            geom_line(aes(linetype=SECTOR))+
+            scale_linetype_manual(values=c("twodash","solid", "dashed", "longdash", "dotted", "dotdash" ))+
+            theme(legend.position="none"),
+          ggplot(INFOR_sub,aes(x=YEAR, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+            scale_shape_manual(values=1:nlevels(INFOR_sub$SECTOR)) +
+            geom_line(aes(linetype=SECTOR))+
+            scale_linetype_manual(values=c("twodash","solid", "dashed", "longdash", "dotted", "dotdash" ))+
+            theme(legend.position="none")+  
+            labs(y = "Labour Share"), cols = 2)
+
+
+# Wholesales sub-code plot diagram.
+WHOLE_sub_LS <- melt((cbind(WHOLE45[,c(1,4)],WHOLE46[,4],WHOLE47[,4])),
+                     id="YEAR", variable.name = "SECTOR", value.name = "LS")
+WHOLE_sub_LS <- (cbind(WHOLE45[,c(1,4)],WHOLE46[,4],WHOLE47[,4]))
+setnames(WHOLE_sub_LS, c(1:4), c("YEAR","WHOLE45","WHOLE46","WHOLE47"))
+WHOLE_sub_LS <- melt(WHOLE_sub_LS , id="YEAR", variable.name = "SECTOR", value.name = "LS")
+
+
+WHOLE_sub_HHI <- melt((cbind(WHOLE45[,c(1,5)],WHOLE46[,5],WHOLE47[,5])),
+                      id="YEAR", variable.name = "SECTOR", value.name = "HHI")
+
+WHOLE_sub_CR4 <- melt((cbind(WHOLE45[,c(1,2)],WHOLE46[,2],WHOLE47[,2])),
+                      id="YEAR", variable.name = "SECTOR", value.name = "CR4")
+
+WHOLE_sub_CR20 <- melt((cbind(WHOLE45[,c(1,3)],WHOLE46[,3],WHOLE47[,3])),
+                       id="YEAR", variable.name = "SECTOR", value.name = "CR20")
+
+WHOLE_sub <- cbind(WHOLE_sub_LS, WHOLE_sub_CR4[,3],WHOLE_sub_CR20[,3],WHOLE_sub_HHI[,3])
+
+remove(WHOLE_sub_CR4,WHOLE_sub_LS,WHOLE_sub_HHI,WHOLE_sub_CR20)
+
+ggplot(WHOLE_sub,aes(x=CR4, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(WHOLE_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+ggplot(WHOLE_sub,aes(x=CR20, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(WHOLE_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+ggplot(WHOLE_sub,aes(x=HHI, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(WHOLE_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+
+# M_N sub-code plot diagram.
+## DROP M_N_75
+M_N_sub_LS <- (cbind(M_N69[,c(1,4)],M_N70[,4],M_N71[,4]
+                     ,M_N72[,4],M_N73[,4],M_N74[,4]
+                     ,M_N77[,4],M_N78[,4],M_N79[,4]
+                     ,M_N80[,4],M_N81[,4],M_N82[,4]))
+setnames(M_N_sub_LS, c(1:13), c("YEAR","M_N69","M_N70","M_N71",
+                                "M_N72","M_N73","M_N74",
+                                "M_N77","M_N78","M_N79",
+                                "M_N80","M_N81","M_N82"))
+M_N_sub_LS <- melt(M_N_sub_LS , id="YEAR", variable.name = "SECTOR", value.name = "LS")
+
+
+M_N_sub_HHI <- melt((cbind(M_N69[,c(1,5)],M_N70[,5],M_N71[,5],
+                           M_N72[,5],M_N73[,5],M_N74[,5],
+                           M_N77[,5],M_N78[,5],
+                           M_N79[,5],M_N80[,5],M_N81[,5],M_N82[,5])),
+                    id="YEAR", variable.name = "SECTOR", value.name = "HHI")
+
+M_N_sub_CR4 <- melt((cbind(M_N69[,c(1,2)],M_N70[,2],M_N71[,2],
+                           M_N72[,2],M_N73[,2],M_N74[,2],
+                           M_N77[,2],M_N78[,2],
+                           M_N79[,2],M_N80[,2],M_N81[,2],M_N82[,2])),
+                    id="YEAR", variable.name = "SECTOR", value.name = "CR4")
+
+M_N_sub_CR20 <- melt((cbind(M_N69[,c(1,3)],M_N70[,3],M_N71[,3],
+                            M_N72[,3],M_N73[,3],M_N74[,3],
+                            M_N77[,3],M_N78[,3],
+                            M_N79[,3],M_N80[,3],M_N81[,3],M_N82[,3])),
+                     id="YEAR", variable.name = "SECTOR", value.name = "CR20")
+
+M_N_sub <- cbind(M_N_sub_LS, M_N_sub_CR4[,3],M_N_sub_CR20[,3],M_N_sub_HHI[,3])
+
+remove(M_N_sub_CR4,M_N_sub_LS,M_N_sub_HHI,M_N_sub_CR20)
+
+ggplot(M_N_sub,aes(x=CR4, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(M_N_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+ggplot(M_N_sub,aes(x=CR20, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(M_N_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+ggplot(M_N_sub,aes(x=HHI, y=LS, group=SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(M_N_sub$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+```
+
+#Regression analysis result and export the result
+```{r}
+#All sub-sectors
+REG.1_CR4 <- cbind(Manufacturing[,c(1,6)],Information[,6],Finance[,6],Construction[,6],
+                   Wholesales[,6],MN[,6])
+setnames(REG.1_CR4, c(1:7), c("YEAR","M","INFOR","FI",
+                              "CONS","WHOLE","M_N"))
+REG.1_CR4 <- melt(REG.1_CR4,id = "YEAR",variable.name = "SECTOR", value.name = "CR4")
+
+REG.1_CR20 <- cbind(Manufacturing[,c(1,5)],Information[,5],Finance[,5],Construction[,5],
+                    Wholesales[,5],MN[,5])
+setnames(REG.1_CR20, c(1:7), c("YEAR","M_CR20","INFOR_CR20","FI_CR20",
+                               "CONS_CR20","WHOLE_CR20","M_N_CR20"))
+REG.1_CR20 <- melt(REG.1_CR20,id = "YEAR",variable.name = "SECTOR", value.name = "CR20")
+
+REG.1_LS <- cbind(Manufacturing[,c(1,9)],Information[,9],Finance[,9],Construction[,9],
+                  Wholesales[,9],MN[,9])
+setnames(REG.1_LS, c(1:7), c("YEAR","M_LS","INFOR_LS","FI_LS",
+                             "CONS_LS","WHOLE_LS","M_N_LS"))
+REG.1_LS <- melt(REG.1_LS,id = "YEAR",variable.name = "SECTOR", value.name = "LS")
+
+REG.1_HHI <- cbind(Manufacturing[,c(1,10)],Information[,10],Finance[,10],Construction[,10],
+                   Wholesales[,10],MN[,10])
+setnames(REG.1_HHI, c(1:7), c("YEAR","M_HHI","INFOR_HHI","FI_HHI",
+                              "CONS_HHI","WHOLE_HHI","M_N_HHI"))
+REG.1_HHI <- melt(REG.1_HHI,id = "YEAR",variable.name = "SECTOR", value.name = "HHI")
+
+REG.1 <- cbind(REG.1_CR4, REG.1_CR20[,3], REG.1_LS[,3], REG.1_HHI[,3])
+remove(REG.1_CR4, REG.1_CR20, REG.1_LS, REG.1_HHI)
+
+REG.1<-pdata.frame(REG.1,index = c("SECTOR","YEAR"))
+REG.1_CR4<- plm(LS ~ CR4, data = REG.1, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.1_CR4)
+REG.1_CR20<- plm(LS ~ CR20, data = REG.1, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.1_CR20)
+REG.1_HHI<- plm(LS ~ HHI, data = REG.1, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.1_HHI)
+
+ggplot(REG.1,aes(x=CR4, y=LS, group= SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(REG.1$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+
+ggplot(REG.1,aes(x=YEAR, y=CR4, group= SECTOR,color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(REG.1$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+ggplot(REG.1,aes(x=YEAR, y=CR20, group= SECTOR, color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(REG.1$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+
+ggplot(REG.1,aes(x=YEAR, y=HHI, group= SECTOR, color=SECTOR, shape=SECTOR)) +
+  scale_shape_manual(values=1:nlevels(REG.1$SECTOR)) +
+  geom_point() +
+  geom_point(size=1)
+
+
+REG.2 <- rbind(M_N_sub,M_sub,FI_sub,INFOR_sub,CONS_sub,WHOLE_sub)
+setnames(REG.2, c(2), c("SECTOR"))
+REG.2 <- pdata.frame(REG.2, index = c("SECTOR","YEAR"))
+
+REG.2_CR4<- plm(LS ~ CR4, data = REG.2, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.2_CR4)
+REG.2_CR20<- plm(LS ~ CR20, data = REG.2, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.2_CR20)
+REG.2_HHI<- plm(LS ~ HHI, data = REG.2, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.2_HHI)
+
+#Industrial regression
+
+REG.3_M <- pdata.frame(M_sub, index = c("SECTOR","YEAR"))
+REG.3_M_CR4<- plm(LS ~ CR4, data = REG.3_M, index = c("SECTOR","YEAR"),model = "within",effect = "twoways")
+summary(REG.3_M_CR4)
+REG.3_M_CR20<- plm(LS ~ CR20, data = REG.3_M, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_M_CR20)
+REG.3_M_HHI<- plm(LS ~ HHI, data = REG.3_M, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_M_HHI)
+
+REG.3_CONS <- pdata.frame(CONS_sub, index = c("SECTOR","YEAR"))
+REG.3_CONS_CR4<- plm(LS ~ CR4, data = REG.3_CONS, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_CONS_CR4)
+REG.3_CONS_CR20<- plm(LS ~ CR20, data = REG.3_CONS, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_CONS_CR20)
+REG.3_CONS_HHI<- plm(LS ~ HHI, data = REG.3_CONS, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_CONS_HHI)
+
+REG.3_FI <- pdata.frame(FI_sub, index = c("SECTOR","YEAR"))
+REG.3_FI_CR4<- plm(LS ~ CR4, data = REG.3_FI, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_FI_CR4)
+REG.3_FI_CR20<- plm(LS ~ CR20, data = REG.3_FI, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_FI_CR20)
+REG.3_FI_HHI<- plm(LS ~ HHI, data = REG.3_FI, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_FI_HHI)
+
+REG.3_INFOR <- pdata.frame(INFOR_sub, index = c("SECTOR","YEAR"))
+REG.3_INFOR_CR4<- plm(LS ~ CR4, data = REG.3_INFOR, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_INFOR_CR4)
+REG.3_INFOR_CR20<- plm(LS ~ CR20, data = REG.3_INFOR, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_INFOR_CR20)
+REG.3_INFOR_HHI<- plm(LS ~ HHI, data = REG.3_INFOR, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_INFOR_HHI)
+
+REG.3_WHOLE <- pdata.frame(WHOLE_sub, index = c("SECTOR","YEAR"))
+REG.3_WHOLE_CR4<- plm(LS ~ CR4, data = REG.3_WHOLE, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_WHOLE_CR4)
+REG.3_WHOLE_CR20<- plm(LS ~ CR20, data = REG.3_WHOLE, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_WHOLE_CR20)
+REG.3_WHOLE_HHI<- plm(LS ~ HHI, data = REG.3_WHOLE, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_WHOLE_HHI)
+
+REG.3_M_N <- pdata.frame(M_N_sub, index = c("SECTOR","YEAR"))
+REG.3_M_N_CR4<- plm(LS ~ CR4, data = REG.3_M_N, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_M_N_CR4)
+REG.3_M_N_CR20<- plm(LS ~ CR20, data = REG.3_M_N, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_M_N_CR20)
+REG.3_M_N_HHI<- plm(LS ~ HHI, data = REG.3_M_N, index = c("SECTOR","YEAR"), model = "within",effect = "twoways")
+summary(REG.3_M_N_HHI)
+
+#####Summary stats####
+SUM_MAIN <- data.table(REG.1)
+SUM_MAIN <- SUM_MAIN[, lapply(.SD, mean),.SDcols=c(3:6), by = "SECTOR"]
+
+SUM_SUB <- data.table(REG.2)
+SUM_SUB <- SUM_SUB[, lapply(.SD, mean),.SDcols=c(3:6), by = "SECTOR"]
+
+
+stargazer(REG.1_CR4, REG.1_CR20, REG.1_HHI , title="INDUSTRIAL REGRESSION", type = "html", out="RESULT.htm", omit = "YEAR")
+stargazer(REG.2_CR4, REG.2_CR20, REG.2_HHI , title="POOLED SUB-SECTOR REGRESSION", type = "html", out="RESULT 2.htm", omit = "YEAR")
+stargazer(REG.3_M_CR4,REG.3_M_CR20, REG.3_M_HHI , title="SUB-SECTOR REGRESSION MANUFACTURING", type = "html", out="RESULT 3 manu.htm", omit = "YEAR")
+stargazer(REG.3_CONS_CR4,REG.3_CONS_CR20, REG.3_CONS_HHI , title="SUB-SECTOR REGRESSION CONSTRUCTION", type = "html", out="RESULT 3 cons.htm", omit = "YEAR")
+stargazer(REG.3_INFOR_CR4,REG.3_INFOR_CR20, REG.3_INFOR_HHI , title="SUB-SECTOR REGRESSION INFORMATION", type = "html", out="RESULT 3 infor.htm", omit = "YEAR")
+stargazer(REG.3_FI_CR4,REG.3_FI_CR20, REG.3_FI_HHI , title="SUB-SECTOR REGRESSION FINANCE", type = "html", out="RESULT 3 fi.htm", omit = "YEAR")
+stargazer(REG.3_WHOLE_CR4,REG.3_WHOLE_CR20, REG.3_WHOLE_HHI , title="SUB-SECTOR REGRESSION WHOLESALES", type = "html", out="RESULT 3 wholesales.htm", omit = "YEAR")
+stargazer(REG.3_M_N_CR4,REG.3_M_N_CR20, REG.3_M_N_HHI , title="SUB-SECTOR REGRESSION M_N", type = "html", out="RESULT 3 MN.htm", omit = "YEAR")
+
+LS_P_1 <-Manufacturing[,c(1,5,6,9,10)]
+setnames(LS_P_1, old = c(2:5), new = c("CR20", "CR4", "LS", "HHI"))
+LS_P_1 <- melt(LS_P_1, id="YEAR", variable.name = "CATEGORY", value.name = "VALUE")
+LS_P_1 <- ggplot(LS_P_1, aes(x=YEAR, group=CATEGORY,color=CATEGORY, shape=CATEGORY))+
+  geom_line(aes(y=VALUE,linetype=CATEGORY))+
+  labs(title="Manufacturing",
+       x="Year", y = "Measures")+
+  theme(legend.position="none")
+
+LS_P_2 <- Construction[,c(1,5,6,9,10)]
+setnames(LS_P_2, old = c(2:5), new = c("CR20", "CR4", "LS", "HHI"))
+LS_P_2 <- melt(LS_P_2, id="YEAR", variable.name = "CATEGORY", value.name = "VALUE")
+LS_P_2 <- ggplot(LS_P_2, aes(x=YEAR, group=CATEGORY,color=CATEGORY, shape=CATEGORY))+
+  geom_line(aes(y=VALUE,linetype=CATEGORY))+
+  labs(title="Construction",
+       x="Year", y = "Measures")+
+  theme(legend.position="none")
+
+LS_P_3 <- Wholesales[,c(1,5,6,9,10)]
+setnames(LS_P_3, old = c(2:5), new = c("CR20", "CR4", "LS", "HHI"))
+LS_P_3 <- melt(LS_P_3, id="YEAR", variable.name = "CATEGORY", value.name = "VALUE")
+LS_P_3 <- ggplot(LS_P_3, aes(x=YEAR, group=CATEGORY,color=CATEGORY, shape=CATEGORY))+
+  geom_line(aes(y=VALUE,linetype=CATEGORY))+
+  labs(title="Wholesale",
+       x="Year", y = "Measures")+
+  theme(legend.position="none")
+
+LS_P_4 <- Information[,c(1,5,6,9,10)]
+setnames(LS_P_4, old = c(2:5), new = c("CR20", "CR4", "LS", "HHI"))
+LS_P_4 <- melt(LS_P_4, id="YEAR", variable.name = "CATEGORY", value.name = "VALUE")
+LS_P_4 <- ggplot(LS_P_4, aes(x=YEAR, group=CATEGORY,color=CATEGORY, shape=CATEGORY))+
+  geom_line(aes(y=VALUE,linetype=CATEGORY))+
+  labs(title="Information",
+       x="Year", y = "Measures")+
+  theme(legend.position="none")
+
+LS_P_5 <- Finance[,c(1,5,6,9,10)]
+setnames(LS_P_5, old = c(2:5), new = c("CR20", "CR4", "LS", "HHI"))
+LS_P_5 <- melt(LS_P_5, id="YEAR", variable.name = "CATEGORY", value.name = "VALUE")
+LS_P_5 <- ggplot(LS_P_5, aes(x=YEAR, group=CATEGORY,color=CATEGORY, shape=CATEGORY))+
+  geom_line(aes(y=VALUE,linetype=CATEGORY))+
+  labs(title="Finance",
+       x="Year", y = "Measures")+
+  theme(legend.position="none")
+
+LS_P_6 <- MN[,c(1,5,6,9,10)]
+setnames(LS_P_6, old = c(2:5), new = c("CR20", "CR4", "LS", "HHI"))
+LS_P_6 <- melt(LS_P_6, id="YEAR", variable.name = "CATEGORY", value.name = "VALUE")
+LS_P_6 <- ggplot(LS_P_6, aes(x=YEAR, group=CATEGORY,color=CATEGORY, shape=CATEGORY))+
+  geom_line(aes(y=VALUE,linetype=CATEGORY))+
+  labs(title="MN",
+       x="Year", y = "Measures")+
+  theme(legend.position="bottom")
+
+multiplot(LS_P_1, LS_P_2, LS_P_3,
+          LS_P_4, LS_P_5, LS_P_6, cols=2)
+
+##Reporting descriptive stats
+##Descriptive stats
+
+DES_SALES <- cbind.fill(melt(M_sales, variable.name = "YEAR", value.name = "M.sales")[,3],
+                        melt(CONS_sales, variable.name = "YEAR", value.name = "CONS.sales")[,3],
+                        melt(WHOLE_sales, variable.name = "YEAR", value.name = "WHOLE.sales")[,3],
+                        melt(INFOR_sales, variable.name = "YEAR", value.name = "INFOR.sales")[,3],
+                        melt(FI_sales, variable.name = "YEAR", value.name = "FI.sales")[,3],
+                        melt(M_N_sales, variable.name = "YEAR", value.name = "M_N.sales")[,3],
+                        fill=NA)
+DES_SALES_2<- data.table(melt(DES_SALES, variable.name = "SECTOR", value.name = "SALES"))
+dt.DES_SALES_2 <- DES_SALES_2[,list(Mean=mean(SALES, na.rm=TRUE),
+                                    Min=min(SALES, na.rm=TRUE),
+                                    Max=max(SALES, na.rm=TRUE),
+                                    SD=sd(SALES, na.rm=TRUE)),
+                              by='SECTOR']
+dt.DES_SALES_2$MAIN <-  c("M","CONS","WHOLE","INFOR","FI","M_N")
+
+dt.DES_SALES_2.1_dt <- data.table(REG.1)
+dt.DES_SALES_2.1 <- dt.DES_SALES_2.1_dt[,list(Mean=mean(CR4, na.rm=TRUE),
+                                              Min=min(CR4, na.rm=TRUE),
+                                              Max=max(CR4, na.rm=TRUE),
+                                              SD=sd(CR4, na.rm=TRUE)),
+                                        by='SECTOR']
+dt.DES_SALES_2.1$SECTOR <-recode(dt.DES_SALES_2.1$SECTOR,
+                                 M='M.CR4',INFOR='INFOR.CR4',FI='FI.CR4',
+                                 WHOLE='WHOLE.CR4',CONS='CONS.CR4',M.N='M.N.CR4')
+dt.DES_SALES_2.1$MAIN <-  c("M","INFOR","FI","CONS","WHOLE","M_N")
+
+dt.DES_SALES_2.2 <- dt.DES_SALES_2.1_dt[,list(Mean=mean(CR20, na.rm=TRUE),
+                                              Min=min(CR20, na.rm=TRUE),
+                                              Max=max(CR20, na.rm=TRUE),
+                                              SD=sd(CR20, na.rm=TRUE)),
+                                        by='SECTOR']
+dt.DES_SALES_2.2$SECTOR <-recode(dt.DES_SALES_2.2$SECTOR,
+                                 M='M.CR20',INFOR='INFOR.CR20',FI='FI.CR20',
+                                 WHOLE='WHOLE.CR20',CONS='CONS.CR20',M.N='M.N.CR20')
+dt.DES_SALES_2.2$MAIN <-  c("M","INFOR","FI","CONS","WHOLE","M_N")
+
+dt.DES_SALES_2.3 <- dt.DES_SALES_2.1_dt[,list(Mean=mean(HHI, na.rm=TRUE),
+                                              Min=min(HHI, na.rm=TRUE),
+                                              Max=max(HHI, na.rm=TRUE),
+                                              SD=sd(HHI, na.rm=TRUE)),
+                                        by='SECTOR']
+dt.DES_SALES_2.3$SECTOR <-recode(dt.DES_SALES_2.3$SECTOR,
+                                 M='M.HHI',INFOR='INFOR.HHI',FI='FI.HHI',
+                                 WHOLE='WHOLE.HHI',CONS='CONS.HHI',M.N='M.N.HHI')
+dt.DES_SALES_2.3$MAIN <-  c("M","INFOR","FI","CONS","WHOLE","M_N")
+
+dt.DES_SALES_2.4 <- dt.DES_SALES_2.1_dt[,list(Mean=mean(LS, na.rm=TRUE),
+                                              Min=min(LS, na.rm=TRUE),
+                                              Max=max(LS, na.rm=TRUE),
+                                              SD=sd(LS, na.rm=TRUE)),
+                                        by='SECTOR']
+dt.DES_SALES_2.4$SECTOR <-recode(dt.DES_SALES_2.4$SECTOR,
+                                 M='M.LS',INFOR='INFOR.LS',FI='FI.LS',
+                                 WHOLE='WHOLE.LS',CONS='CONS.LS',M.N='M.N.LS')
+dt.DES_SALES_2.4$MAIN <-  c("M","INFOR","FI","CONS","WHOLE","M_N")
+
+DES_VA <- cbind.fill(melt(M_VA, variable.name = "YEAR", value.name = "M.VA")[,3],
+                     melt(CONS_VA, variable.name = "YEAR", value.name = "CONS.VA")[,3],
+                     melt(WHOLE_VA, variable.name = "YEAR", value.name = "WHOLE.VA")[,3],
+                     melt(INFOR_VA, variable.name = "YEAR", value.name = "INFOR.VA")[,3],
+                     melt(FI_VA, variable.name = "YEAR", value.name = "FI.VA")[,3],
+                     melt(M_N_VA, variable.name = "YEAR", value.name = "M_N.VA")[,3],
+                     fill=NA)
+DES_VA_2<- data.table(melt(DES_VA, variable.name = "SECTOR", value.name = "VA"))
+dt.DES_VA_2 <- DES_VA_2[,list(Mean=mean(VA, na.rm=TRUE),
+                              Min=min(VA, na.rm=TRUE),
+                              Max=max(VA, na.rm=TRUE),
+                              SD=sd(VA, na.rm=TRUE)),
+                        by='SECTOR']
+dt.DES_VA_2$MAIN <-  c("M","CONS","WHOLE","INFOR","FI","M_N")
+
+DES_COE <- cbind.fill(melt(M_COE, variable.name = "YEAR", value.name = "M.COE")[,3],
+                      melt(CONS_COE, variable.name = "YEAR", value.name = "CONS.COE")[,3],
+                      melt(WHOLE_COE, variable.name = "YEAR", value.name = "WHOLE.COE")[,3],
+                      melt(INFOR_COE, variable.name = "YEAR", value.name = "INFOR.COE")[,3],
+                      melt(FI_COE, variable.name = "YEAR", value.name = "FI.COE")[,3],
+                      melt(M_N_COE, variable.name = "YEAR", value.name = "M_N.COE")[,3],
+                      fill=NA)
+DES_COE_2<- data.table(melt(DES_COE, variable.name = "SECTOR", value.name = "COE"))
+dt.DES_COE_2 <- DES_COE_2[,list(Mean=mean(COE, na.rm=TRUE),
+                                Min=min(COE, na.rm=TRUE),
+                                Max=max(COE, na.rm=TRUE),
+                                SD=sd(COE, na.rm=TRUE)),
+                          by='SECTOR']
+dt.DES_COE_2$MAIN <-  c("M","CONS","WHOLE","INFOR","FI","M_N")
+
+Desc <- rbind(dt.DES_SALES_2, dt.DES_VA_2, dt.DES_COE_2, dt.DES_SALES_2.1,
+              dt.DES_SALES_2.2,dt.DES_SALES_2.3,dt.DES_SALES_2.4)
+Desc <- Desc[order(Desc$MAIN, decreasing= F),]
+
+remove(dt.DES_SALES_2, dt.DES_VA_2, dt.DES_COE_2, dt.DES_SALES_2.1,
+       dt.DES_SALES_2.2,dt.DES_SALES_2.3,dt.DES_SALES_2.4)
+
+####output data table####
+getwd()
+write.csv(Manufacturing, file = "Manufacturing.csv",row.names=FALSE)
+write.csv(Construction, file = "Construction.csv",row.names=FALSE)
+write.csv(Finance, file = "Finance.csv",row.names=FALSE)
+write.csv(Information, file = "Information.csv",row.names=FALSE)
+write.csv(Wholesales, file = "Wholesale.csv",row.names=FALSE)
+write.csv(MN, file = "MN.csv",row.names=FALSE)
+
+#sub-sector
+write.csv(M_sub, file = "M_sub.csv",row.names=FALSE)
+write.csv(FI_sub, file = "FI_sub.csv",row.names=FALSE)
+write.csv(INFOR_sub, file = "INFOR_sub.csv",row.names=FALSE)
+write.csv(CONS_sub, file = "CONS_sub.csv",row.names=FALSE)
+write.csv(WHOLE_sub, file = "WHOLE_sub.csv",row.names=FALSE)
+write.csv(M_N_sub, file = "M_N_sub.csv",row.names=FALSE)
+
+#KLEMS
+write.csv(KLEMS, file = "KLEMS.csv",row.names=FALSE)
+
+#Descriptive stats
+write.csv(Desc, file = "Desc.csv",row.names=FALSE)
+
+##Regression
+write.csv(REG.1, file = "REG.1.csv",row.names=FALSE)
+write.csv(REG.2, file = "REG.2.csv",row.names=FALSE)
+write.csv(REG.3_CONS, file = "REG.3_CONS.csv",row.names=FALSE)
+write.csv(REG.3_FI, file = "REG.3_FI.csv",row.names=FALSE)
+write.csv(REG.3_INFOR, file = "REG.3_INFOR.csv",row.names=FALSE)
+write.csv(REG.3_M, file = "REG.3_M.csv",row.names=FALSE)
+write.csv(REG.3_WHOLE, file = "REG.3_WHOLE.csv",row.names=FALSE)
+write.csv(REG.3_M_N, file = "REG.3_M_N.csv",row.names=FALSE)
+```
+
+This note is for the dissertation. The detailed analysis and result is in the dissertation.
